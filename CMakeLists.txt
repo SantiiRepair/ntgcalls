@@ -29,16 +29,16 @@ include(cmake/PlatformUtil.cmake)
 include(cmake/DownloadProject.cmake)
 include(cmake/GitUtils.cmake)
 include(cmake/FindCURL.cmake)
-include(cmake/FindWebRTC.cmake)
-include(cmake/FindLibCXX.cmake)
-include(cmake/FindBoost.cmake)
+# include(cmake/FindWebRTC.cmake)
+# include(cmake/FindLibCXX.cmake)
+# include(cmake/FindBoost.cmake)
 
 # pybind11
 add_subdirectory(deps/pybind11)
 
 # nlohmann/json
 set(JSON_BuildTests OFF CACHE INTERNAL "")
-add_subdirectory(deps/json EXCLUDE_FROM_ALL)
+add_subdirectory(deps/libdatachannel)
 
-add_subdirectory(wrtc)
-add_subdirectory(ntgcalls)
+#add_subdirectory(wrtc)
+add_subdirectory(ntgcalls_x)

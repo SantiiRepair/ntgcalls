@@ -4,8 +4,6 @@
 
 #include "ntgcalls.hpp"
 
-#include <iostream>
-
 #include "exceptions.hpp"
 #include "instances/group_call.hpp"
 #include "instances/p2p_call.hpp"
