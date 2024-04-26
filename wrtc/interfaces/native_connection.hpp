@@ -25,7 +25,7 @@
 namespace wrtc {
     class NativeConnection final : public sigslot::has_slots<>, public InstanceNetworking, public NetworkInterface {
         bool connected = false, failed = false;
-        bool isOutgoing, enableTCP, enableP2P;
+        bool isOutgoing, enableP2P;
         int64_t lastDisconnectedTimestamp = 0;
         std::vector<RTCServer> rtcServers;
         PeerIceParameters localParameters, remoteParameters;
@@ -49,6 +49,8 @@ namespace wrtc {
         std::unique_ptr<OutgoingVideoChannel> videoChannel;
         webrtc::LocalAudioSinkAdapter audioSink;
         std::optional<webrtc::VideoTrackSourceInterface*> videoSink;
+        std::unique_ptr<rtc::BasicPacketSocketFactory> socketFactory;
+        std::unique_ptr<rtc::BasicNetworkManager> networkManager;
 
         void notifyStateUpdated() const;
 
@@ -76,7 +78,7 @@ namespace wrtc {
 
         void createChannels();
     public:
-        explicit NativeConnection(std::vector<RTCServer> rtcServers, bool enableTCP, bool enableP2P, bool isOutgoing);
+        explicit NativeConnection(std::vector<RTCServer> rtcServers, bool enableP2P, bool isOutgoing);
 
         ~NativeConnection() override;
 

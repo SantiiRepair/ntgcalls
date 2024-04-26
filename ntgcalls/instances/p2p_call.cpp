@@ -118,7 +118,6 @@ namespace ntgcalls {
         } else {
             connection = std::make_unique<wrtc::NativeConnection>(
                 RTCServer::toRtcServers(servers),
-                true,
                 p2pAllowed,
                 type() == Type::Outgoing
             );
@@ -169,7 +168,6 @@ namespace ntgcalls {
                 sendLocalDescription();
             } else {
                 sendInitialSetup();
-                sendMediaState(stream->getState());
             }
         }
         setConnectionObserver();

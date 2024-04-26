@@ -28,7 +28,7 @@ namespace wrtc {
             "data",
             true,
             dataChannelInit,
-            networkThread,
+            signalingThread,
             networkThread
         );
         if (dataChannel == nullptr) {

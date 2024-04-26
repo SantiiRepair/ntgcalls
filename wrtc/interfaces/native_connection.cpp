@@ -13,6 +13,7 @@
 #include <p2p/base/basic_async_resolver_factory.h>
 #include <p2p/base/p2p_transport_channel.h>
 #include <pc/media_factory.h>
+#include <system_wrappers/include/field_trial.h>
 
 #include "reflector_relay_port_factory.hpp"
 #include "media/rtc_audio_source.hpp"
@@ -21,10 +22,9 @@
 namespace wrtc {
     NativeConnection::NativeConnection(
         std::vector<RTCServer> rtcServers,
-        const bool enableTCP,
         const bool enableP2P,
-        const bool isOutgoing): isOutgoing(isOutgoing), enableTCP(enableTCP), enableP2P(enableP2P), rtcServers(std::move(rtcServers)) {
-        networkThread()->PostTask([this] {
+        const bool isOutgoing): isOutgoing(isOutgoing), enableP2P(enableP2P), rtcServers(std::move(rtcServers)) {
+        networkThread()->BlockingCall([this] {
             localParameters = PeerIceParameters(
                 rtc::CreateRandomString(cricket::ICE_UFRAG_LENGTH),
                 rtc::CreateRandomString(cricket::ICE_PWD_LENGTH),
@@ -61,7 +61,7 @@ namespace wrtc {
         });
         contentNegotiationContext = std::make_unique<ContentNegotiationContext>(factory->fieldTrials(), isOutgoing, factory->mediaEngine(), factory->ssrcGenerator());
         contentNegotiationContext->copyCodecsFromChannelManager(factory->mediaEngine(), false);
-        networkThread()->PostTask([this] {
+        networkThread()->BlockingCall([this] {
             start();
         });
     }
@@ -75,15 +75,14 @@ namespace wrtc {
             relayPortFactory.get()
         );
         uint32_t flags = portAllocator->flags();
-        flags |= cricket::PORTALLOCATOR_ENABLE_IPV6 | cricket::PORTALLOCATOR_ENABLE_IPV6_ON_WIFI;
-        if (!enableTCP) {
-            flags |= cricket::PORTALLOCATOR_DISABLE_TCP;
-        }
+        flags |= cricket::PORTALLOCATOR_ENABLE_IPV6;
+        flags |= cricket::PORTALLOCATOR_ENABLE_IPV6_ON_WIFI;
+        flags |= cricket::PORTALLOCATOR_DISABLE_TCP;
         if (!enableP2P) {
             flags |= cricket::PORTALLOCATOR_DISABLE_UDP;
             flags |= cricket::PORTALLOCATOR_DISABLE_STUN;
             uint32_t candidateFilter = portAllocator->candidate_filter();
-            candidateFilter &= ~(cricket::CF_REFLEXIVE);
+            candidateFilter &= ~cricket::CF_REFLEXIVE;
             portAllocator->SetCandidateFilter(candidateFilter);
         }
         portAllocator->set_step_delay(cricket::kMinimumStepDelay);
@@ -131,8 +130,7 @@ namespace wrtc {
             candidatePairChanged(event);
         });
         transportChannel->SignalNetworkRouteChanged.connect(this, &NativeConnection::transportRouteChanged);
-        webrtc::CryptoOptions cryptoOptions = getDefaultCryptoOptions();
-        dtlsTransport = std::make_unique<cricket::DtlsTransport>(transportChannel.get(), cryptoOptions, nullptr);
+        dtlsTransport = std::make_unique<cricket::DtlsTransport>(transportChannel.get(), getDefaultCryptoOptions(), nullptr);
         dtlsTransport->SignalWritableState.connect(this, &NativeConnection::OnTransportWritableState_n);
         dtlsTransport->SignalReceivingState.connect(this, &NativeConnection::OnTransportReceivingState_n);
         dtlsTransport->SetLocalCertificate(localCertificate);
@@ -232,7 +230,7 @@ namespace wrtc {
 
     // ReSharper disable once CppMemberFunctionMayBeConst
     void NativeConnection::candidateGathered(cricket::IceTransportInternal*, const cricket::Candidate& candidate) {
-        assert(networkThread->IsCurrent());
+        assert(networkThread()->IsCurrent());
         signalingThread()->PostTask([this, candidate] {
             cricket::Candidate patchedCandidate = candidate;
             patchedCandidate.set_component(1);
@@ -248,7 +246,7 @@ namespace wrtc {
 
     // ReSharper disable once CppPassValueParameterByConstReference
     void NativeConnection::transportRouteChanged(absl::optional<rtc::NetworkRoute> route) {
-        assert(networkThread->IsCurrent());
+        assert(networkThread()->IsCurrent());
         if (route.has_value()) {
             RTC_LOG(LS_INFO) << "NativeNetworkingImpl route changed: " << route->DebugString();
             const bool localIsWifi = route->local.adapter_type() == rtc::AdapterType::ADAPTER_TYPE_WIFI;
@@ -264,12 +262,12 @@ namespace wrtc {
     }
 
     void NativeConnection::OnTransportWritableState_n(rtc::PacketTransportInternal*) {
-        assert(networkThread->IsCurrent());
+        assert(networkThread()->IsCurrent());
         UpdateAggregateStates_n();
     }
 
     void NativeConnection::OnTransportReceivingState_n(rtc::PacketTransportInternal*){
-        assert(networkThread->IsCurrent());
+        assert(networkThread()->IsCurrent());
         UpdateAggregateStates_n();
     }
 
@@ -286,7 +284,7 @@ namespace wrtc {
     }
 
     void NativeConnection::UpdateAggregateStates_n() {
-        assert(networkThread->IsCurrent());
+        assert(networkThread()->IsCurrent());
         const auto state = transportChannel->GetIceTransportState();
         bool isConnected = false;
         switch (state) {

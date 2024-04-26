@@ -3,6 +3,7 @@
 //
 
 #pragma once
+#include <iostream>
 #include <rtc_base/weak_ptr.h>
 #include <api/data_channel_interface.h>
 #include <pc/sctp_data_channel.h>
@@ -14,17 +15,17 @@
 namespace wrtc {
 
     class SctpDataChannelProviderInterfaceImpl final : public sigslot::has_slots<>, public webrtc::SctpDataChannelControllerInterface, public webrtc::DataChannelObserver, public webrtc::DataChannelSink {
+        rtc::WeakPtrFactory<SctpDataChannelProviderInterfaceImpl> weakFactory;
         std::unique_ptr<cricket::SctpTransportFactory> sctpTransportFactory;
         std::unique_ptr<cricket::SctpTransportInternal> sctpTransport;
+        rtc::scoped_refptr<webrtc::SctpDataChannel> dataChannel;
         rtc::Thread* networkThread;
-        rtc::WeakPtrFactory<SctpDataChannelProviderInterfaceImpl> weakFactory;
         bool isOpen = false;
         bool isSctpTransportStarted = false;
 
         synchronized_callback<bool> onStateChangedCallback;
 
     public:
-        rtc::scoped_refptr<webrtc::SctpDataChannel> dataChannel;
         SctpDataChannelProviderInterfaceImpl(
             rtc::PacketTransportInternal* transportChannel,
             bool isOutgoing,
@@ -55,10 +56,22 @@ namespace wrtc {
         void sendDataChannelMessage(const bytes::binary& data) const;
 
         // Unused
-        void OnChannelClosing(int channel_id) override{}
-        void OnChannelClosed(int channel_id) override{}
-        void OnChannelStateChanged(webrtc::SctpDataChannel* data_channel, webrtc::DataChannelInterface::DataState state) override{}
-        void OnTransportClosed(webrtc::RTCError error) override{};
+        void OnChannelClosing(int channel_id) override
+        {
+            std::cout << "OnChannelClosing" << std::endl;
+        }
+        void OnChannelClosed(int channel_id) override
+        {
+            std::cout << "OnChannelClosed" << std::endl;
+        }
+        void OnChannelStateChanged(webrtc::SctpDataChannel* data_channel, webrtc::DataChannelInterface::DataState state) override
+        {
+            std::cout << "OnChannelStateChanged" << std::endl;
+        }
+        void OnTransportClosed(webrtc::RTCError error) override
+        {
+            std::cout << "OnTransportClosed" << std::endl;
+        };
 
         void onStateChanged(const std::function<void(bool)>& callback);
 
