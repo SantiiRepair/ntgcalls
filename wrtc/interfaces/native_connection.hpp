@@ -49,8 +49,6 @@ namespace wrtc {
         std::unique_ptr<OutgoingVideoChannel> videoChannel;
         webrtc::LocalAudioSinkAdapter audioSink;
         std::optional<webrtc::VideoTrackSourceInterface*> videoSink;
-        std::unique_ptr<rtc::BasicPacketSocketFactory> socketFactory;
-        std::unique_ptr<rtc::BasicNetworkManager> networkManager;
 
         void notifyStateUpdated() const;
 
@@ -76,7 +74,7 @@ namespace wrtc {
 
         void resetDtlsSrtpTransport();
 
-        void createChannels();
+
     public:
         explicit NativeConnection(std::vector<RTCServer> rtcServers, bool enableP2P, bool isOutgoing);
 
@@ -86,6 +84,8 @@ namespace wrtc {
 
         void close() override;
 
+        void createChannels();
+
         void sendDataChannelMessage(const bytes::binary& data) const override;
 
         void addIceCandidate(const IceCandidate& rawCandidate) const override;
@@ -94,7 +94,7 @@ namespace wrtc {
 
         std::unique_ptr<ContentNegotiationContext::NegotiationContents> getPendingOffer() const;
 
-        std::unique_ptr<ContentNegotiationContext::NegotiationContents> setPendingAnwer(std::unique_ptr<ContentNegotiationContext::NegotiationContents> answer);
+        std::unique_ptr<ContentNegotiationContext::NegotiationContents> setPendingAnwer(std::unique_ptr<ContentNegotiationContext::NegotiationContents> answer) const;
 
         void addTrack(const rtc::scoped_refptr<webrtc::MediaStreamTrackInterface>& track) override;
 

@@ -8,10 +8,14 @@
 #include <api/create_peerconnection_factory.h>
 #include <api/rtc_event_log/rtc_event_log_factory.h>
 #include <api/task_queue/default_task_queue_factory.h>
-#include <api/audio_codecs/builtin_audio_encoder_factory.h>
-#include <api/audio_codecs/builtin_audio_decoder_factory.h>
 #include <pc/media_factory.h>
 #include <system_wrappers/include/field_trial.h>
+#include <api/audio_codecs/audio_decoder_factory_template.h>
+#include <api/audio_codecs/audio_encoder_factory_template.h>
+#include <api/audio_codecs/opus/audio_decoder_opus.h>
+#include <api/audio_codecs/opus/audio_encoder_opus.h>
+#include "api/audio_codecs/L16/audio_decoder_L16.h"
+#include "api/audio_codecs/L16/audio_encoder_L16.h"
 
 #include "wrtc/video_factory/video_factory_config.hpp"
 
@@ -53,8 +57,8 @@ namespace wrtc {
             return _audioDeviceModule;
         });
         auto config = VideoFactoryConfig();
-        dependencies.audio_encoder_factory = webrtc::CreateBuiltinAudioEncoderFactory();
-        dependencies.audio_decoder_factory = webrtc::CreateBuiltinAudioDecoderFactory();
+        dependencies.audio_encoder_factory = webrtc::CreateAudioEncoderFactory<webrtc::AudioEncoderOpus, webrtc::AudioEncoderL16>();
+        dependencies.audio_decoder_factory = webrtc::CreateAudioDecoderFactory<webrtc::AudioDecoderOpus, webrtc::AudioDecoderL16>();
         dependencies.video_encoder_factory = config.CreateVideoEncoderFactory();
         dependencies.video_decoder_factory = config.CreateVideoDecoderFactory();
         dependencies.audio_mixer = nullptr;

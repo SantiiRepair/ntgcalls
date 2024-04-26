@@ -24,7 +24,7 @@ namespace wrtc {
         std::vector<RTCServer> rtcServers,
         const bool enableP2P,
         const bool isOutgoing): isOutgoing(isOutgoing), enableP2P(enableP2P), rtcServers(std::move(rtcServers)) {
-        networkThread()->BlockingCall([this] {
+        networkThread()->PostTask([this] {
             localParameters = PeerIceParameters(
                 rtc::CreateRandomString(cricket::ICE_UFRAG_LENGTH),
                 rtc::CreateRandomString(cricket::ICE_PWD_LENGTH),
@@ -61,7 +61,7 @@ namespace wrtc {
         });
         contentNegotiationContext = std::make_unique<ContentNegotiationContext>(factory->fieldTrials(), isOutgoing, factory->mediaEngine(), factory->ssrcGenerator());
         contentNegotiationContext->copyCodecsFromChannelManager(factory->mediaEngine(), false);
-        networkThread()->BlockingCall([this] {
+        networkThread()->PostTask([this] {
             start();
         });
     }
@@ -399,8 +399,7 @@ namespace wrtc {
         return contentNegotiationContext->getPendingOffer();
     }
 
-    std::unique_ptr<ContentNegotiationContext::NegotiationContents> NativeConnection::setPendingAnwer(std::unique_ptr<ContentNegotiationContext::NegotiationContents> answer) {
-        createChannels();
+    std::unique_ptr<ContentNegotiationContext::NegotiationContents> NativeConnection::setPendingAnwer(std::unique_ptr<ContentNegotiationContext::NegotiationContents> answer) const {
         return contentNegotiationContext->setPendingAnwer(std::move(answer));
     }
 

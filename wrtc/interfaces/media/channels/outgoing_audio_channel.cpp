@@ -76,14 +76,14 @@ namespace wrtc {
         workerThread->BlockingCall([&] {
             channel->send_channel()->SetAudioSend(_ssrc, true, nullptr, sink);
             webrtc::RtpParameters initialParameters = channel->send_channel()->GetRtpSendParameters(_ssrc);
-               webrtc::RtpParameters updatedParameters = initialParameters;
-               if (updatedParameters.encodings.empty()) {
-                   updatedParameters.encodings.emplace_back();
-               }
-               updatedParameters.encodings[0].max_bitrate_bps = 32 * 1024;
-               if (initialParameters != updatedParameters) {
-                   channel->send_channel()->SetRtpSendParameters(_ssrc, updatedParameters);
-               }
+            webrtc::RtpParameters updatedParameters = initialParameters;
+            if (updatedParameters.encodings.empty()) {
+                updatedParameters.encodings.emplace_back();
+            }
+            updatedParameters.encodings[0].max_bitrate_bps = 32 * 1024;
+            if (initialParameters != updatedParameters) {
+                channel->send_channel()->SetRtpSendParameters(_ssrc, updatedParameters);
+            }
         });
     }
 

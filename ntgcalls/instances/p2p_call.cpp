@@ -225,7 +225,6 @@ namespace ntgcalls {
                 auto negotiationContents = std::make_unique<wrtc::ContentNegotiationContext::NegotiationContents>();
                 negotiationContents->exchangeId = message->exchangeId;
                 negotiationContents->contents = message->contents;
-                auto negotiation = message->serialize();
                 if (const auto response = Safe<wrtc::NativeConnection>(connection)->setPendingAnwer(std::move(negotiationContents))) {
                     signaling::NegotiateChannelsMessage channelMessage;
                     channelMessage.exchangeId = response->exchangeId;
@@ -234,6 +233,7 @@ namespace ntgcalls {
                     signaling->send(channelMessage.serialize());
                 }
                 sendOfferIfNeeded();
+                Safe<wrtc::NativeConnection>(connection)->createChannels();
                 sendMediaState(stream->getState());
                 break;
             }
