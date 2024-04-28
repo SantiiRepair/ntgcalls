@@ -46,7 +46,7 @@ namespace ntgcalls {
         packetizer->addToChain(nackResponder);
         track->setMediaHandler(packetizer);
 
-        stream = std::make_shared<Stream>(std::make_shared<FileParser>("/root/ntgcalls/tests/opus/", ".opus", 48000, true));
+        stream = std::make_shared<Stream>(std::make_shared<FileParser>("/root/ntgcalls/tests/opus/", ".opus", 50, true));
         stream->onSample([track, rtpConfig, srReporter](Stream::StreamSourceType type, uint64_t sampleTime, rtc::binary sample) {
             std::string streamType = "audio";
             auto elapsedSeconds = static_cast<double>(sampleTime) / (1000 * 1000);
