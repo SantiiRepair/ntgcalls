@@ -14,7 +14,7 @@ namespace wrtc {
         const bool isOutgoing,
         rtc::Thread* networkThread,
         rtc::Thread* signalingThread
-    ): networkThread(networkThread), weakFactory(this) {
+    ): weakFactory(this), networkThread(networkThread) {
         assert(networkThread->IsCurrent());
         sctpTransportFactory = std::make_unique<cricket::SctpTransportFactory>(networkThread);
         sctpTransport = sctpTransportFactory->CreateSctpTransport(transportChannel);

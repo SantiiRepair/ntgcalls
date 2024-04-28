@@ -42,9 +42,9 @@ namespace wrtc {
                 DtlsReadyToSend(readyToSend);
             });
             dtlsSrtpTransport->SubscribeRtcpPacketReceived(this, [this](const rtc::CopyOnWriteBuffer* packet, int64_t) {
-                if (packet) {
-                    call->Receiver()->DeliverRtcpPacket(*packet);
-                }
+                workerThread()->PostTask([this, packet = *packet] {
+                    call->Receiver()->DeliverRtcpPacket(packet);
+                });
             });
             resetDtlsSrtpTransport();
         });
