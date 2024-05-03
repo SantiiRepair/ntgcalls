@@ -21,7 +21,7 @@ namespace wrtc {
             cricket::MediaEngineInterface* mediaEngine,
             rtc::Thread* workerThread,
             rtc::Thread* networkThread,
-            rtc::Thread *signalingThread
+            rtc::Thread* signalingThread
         );
 
         std::unique_ptr<cricket::VoiceChannel> CreateVoiceChannel(

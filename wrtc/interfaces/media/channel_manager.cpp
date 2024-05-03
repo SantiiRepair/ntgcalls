@@ -6,9 +6,9 @@
 namespace wrtc {
     ChannelManager::ChannelManager(
         cricket::MediaEngineInterface *mediaEngine,
-        rtc::Thread *workerThread,
-        rtc::Thread *networkThread,
-        rtc::Thread *signalingThread
+        rtc::Thread* workerThread,
+        rtc::Thread* networkThread,
+        rtc::Thread* signalingThread
     ): mediaEngine(mediaEngine), signalingThread(signalingThread), workerThread(workerThread), networkThread(networkThread) {
         RTC_DCHECK_RUN_ON(signalingThread);
         RTC_DCHECK(workerThread);

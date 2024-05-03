@@ -177,7 +177,7 @@ namespace ntgcalls {
         RTC_LOG(LS_INFO) << "processSignalingData: " << std::string(buffer.begin(), buffer.end());
         try {
             switch (signaling::Message::type(buffer)) {
-                case signaling::Message::Type::InitialSetup: {
+            case signaling::Message::Type::InitialSetup: {
                 const auto message = signaling::InitialSetupMessage::deserialize(buffer);
                 wrtc::PeerIceParameters remoteIceParameters;
                 remoteIceParameters.ufrag = message->ufrag;
