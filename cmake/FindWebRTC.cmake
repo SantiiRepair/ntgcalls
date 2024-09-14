@@ -4,7 +4,11 @@ set(WEBRTC_GIT https://github.com/shiguredo-webrtc-build/webrtc-build)
 set(WEBRTC_DIR ${deps_loc}/libwebrtc)
 set(WEBRTC_SRC ${WEBRTC_DIR}/src)
 set(WEBRTC_INCLUDE ${WEBRTC_SRC}/include)
-set(WEBRTC_LIB ${WEBRTC_SRC}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}webrtc${CMAKE_STATIC_LIBRARY_SUFFIX})
+set(WEBRTC_LIB_DIR ${WEBRTC_SRC}/lib)
+if (ANDROID)
+    set(WEBRTC_LIB_DIR ${WEBRTC_LIB_DIR}/${ANDROID_ABI})
+endif ()
+set(WEBRTC_LIB ${WEBRTC_LIB_DIR}/${CMAKE_STATIC_LIBRARY_PREFIX}webrtc${CMAKE_STATIC_LIBRARY_SUFFIX})
 set(WEBRTC_PATCH_FILE modules/audio_device/include/test_audio_device.cc)
 set(WEBRTC_PATCH_URL https://webrtc.googlesource.com/src.git/+/refs/${WEBRTC_BRANCH}/${WEBRTC_PATCH_FILE})
 
@@ -24,6 +28,10 @@ if(NOT TARGET WebRTC::webrtc)
         set(PLATFORM macos)
         set(ARCHIVE_FORMAT .tar.gz)
         set(ARCH arm64)
+    elseif (ANDROID)
+        set(PLATFORM android)
+        set(ARCHIVE_FORMAT .tar.gz)
+        set(ARCH ${ANDROID_ABI})
     elseif (LINUX)
         set(PLATFORM ubuntu-20.04)
         set(ARCHIVE_FORMAT .tar.gz)
@@ -41,8 +49,11 @@ if(NOT TARGET WebRTC::webrtc)
     if (FAILED_CHECK)
         message(FATAL_ERROR "${CMAKE_SYSTEM_NAME} with ${CMAKE_HOST_SYSTEM_PROCESSOR} is not supported yet")
     endif ()
-
-    set(FILE_NAME webrtc.${PLATFORM}_${ARCH}${ARCHIVE_FORMAT})
+    set(FILE_NAME webrtc.${PLATFORM})
+    if (NOT ANDROID)
+        set(FILE_NAME ${FILE_NAME}_${ARCH})
+    endif ()
+    set(FILE_NAME ${FILE_NAME}${ARCHIVE_FORMAT})
 
     DownloadProject(
         URL ${WEBRTC_GIT}/releases/download/${WEBRTC_REVISION}/${FILE_NAME}
@@ -54,7 +65,7 @@ if(NOT TARGET WebRTC::webrtc)
 
     target_sources(WebRTC::webrtc INTERFACE ${WEBRTC_PATCH_LOCATION})
 
-    set(WEBRTC_INCLUDE
+    set(_DIRS
         ${WEBRTC_INCLUDE}
         ${WEBRTC_INCLUDE}/third_party/abseil-cpp
         ${WEBRTC_INCLUDE}/third_party/boringssl/src/include
@@ -68,7 +79,9 @@ if(NOT TARGET WebRTC::webrtc)
         )
     endif()
 
-    set_target_properties(WebRTC::webrtc PROPERTIES IMPORTED_LOCATION "${WEBRTC_LIB}")
+    set_target_properties(WebRTC::webrtc PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "${_DIRS}"
+            IMPORTED_LOCATION "${WEBRTC_LIB}")
 
     file(READ ${WEBRTC_SRC}/VERSIONS WEBRTC_DATA)
     string(REGEX MATCH "WEBRTC_SRC_THIRD_PARTY_LIBCXX_SRC_COMMIT=([^ \n]+)" matched "${WEBRTC_DATA}")
