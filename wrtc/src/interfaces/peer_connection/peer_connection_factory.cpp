@@ -2,7 +2,7 @@
 // Created by Laky64 on 16/08/2023.
 //
 
-#include "wrtc/interfaces/peer_connection/peer_connection_factory.hpp"
+#include <wrtc/interfaces/peer_connection/peer_connection_factory.hpp>
 #include <api/enable_media.h>
 #include <rtc_base/ssl_adapter.h>
 #include <api/create_peerconnection_factory.h>
@@ -12,8 +12,9 @@
 #include <api/audio_codecs/builtin_audio_decoder_factory.h>
 #include <pc/media_factory.h>
 #include <system_wrappers/include/field_trial.h>
+#include <wrtc/utils/java_context.hpp>
 
-#include "wrtc/video_factory/video_factory_config.hpp"
+#include <wrtc/video_factory/video_factory_config.hpp>
 
 namespace wrtc {
     std::mutex PeerConnectionFactory::_mutex{};
@@ -47,12 +48,13 @@ namespace wrtc {
         dependencies.signaling_thread = signaling_thread_.get();
         dependencies.task_queue_factory = webrtc::CreateDefaultTaskQueueFactory();
         dependencies.event_log_factory = std::make_unique<webrtc::RtcEventLogFactory>();
+        jniEnv = GetJNIEnv();
         dependencies.adm = worker_thread_->BlockingCall([&] {
             if (!_audioDeviceModule)
                 _audioDeviceModule = webrtc::AudioDeviceModule::Create(webrtc::AudioDeviceModule::kDummyAudio, dependencies.task_queue_factory.get());
             return _audioDeviceModule;
         });
-        auto config = VideoFactoryConfig();
+        auto config = VideoFactoryConfig(jniEnv);
         dependencies.audio_encoder_factory = webrtc::CreateBuiltinAudioEncoderFactory();
         dependencies.audio_decoder_factory = webrtc::CreateBuiltinAudioDecoderFactory();
         dependencies.video_encoder_factory = config.CreateVideoEncoderFactory();
@@ -132,7 +134,9 @@ namespace wrtc {
         std::lock_guard lock(_mutex);
         _references++;
         if (_references == 1) {
+#ifndef IS_ANDROID
             rtc::InitializeSSL();
+#endif
             _default = rtc::scoped_refptr<PeerConnectionFactory>(new rtc::RefCountedObject<PeerConnectionFactory>());
         }
         return _default;

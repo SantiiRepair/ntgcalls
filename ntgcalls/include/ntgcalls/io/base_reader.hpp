@@ -1,39 +1,35 @@
 //
-// Created by Laky64 on 04/08/2023.
+// Created by Laky64 on 28/09/24.
 //
 
 #pragma once
-
-
-#include <shared_mutex>
-
-#include <thread>
-#include <wrtc/wrtc.hpp>
+#include <ntgcalls/media/base_sink.hpp>
+#include <wrtc/utils/binary.hpp>
+#include <wrtc/utils/syncronized_callback.hpp>
 
 namespace ntgcalls {
+
     class BaseReader {
-        std::queue<bytes::unique_binary> buffer;
-        std::mutex mutex;
-        std::condition_variable bufferCondition;
-        std::atomic_bool _eof = false, noLatency = false, quit = false;
-        std::thread thread;
-        int64_t size = 0;
-
     protected:
-        int64_t readChunks = 0;
+        wrtc::synchronized_callback<void> eofCallback;
+        wrtc::synchronized_callback<bytes::unique_binary> dataCallback;
+        BaseSink *sink;
+        bool enabled = true;
 
-        virtual bytes::unique_binary readInternal(int64_t size) = 0;
     public:
-        explicit BaseReader(int64_t bufferSize, bool noLatency);
+        explicit BaseReader(BaseSink *sink);
 
         virtual ~BaseReader();
 
-        std::pair<bytes::unique_binary, int64_t> read();
+        virtual void open() = 0;
 
-        [[nodiscard]] bool eof();
+        void onEof(const std::function<void()> &callback);
 
-        virtual void close();
+        void onData(const std::function<void(bytes::unique_binary)> &callback);
 
-        void start();
+        virtual bool set_enabled(bool status);
+
+        bool is_enabled() const;
     };
-}
+
+} // ntgcalls

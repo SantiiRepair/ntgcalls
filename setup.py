@@ -1,13 +1,13 @@
-import base64
-import platform
-import shutil
 import multiprocessing
 import os
+import platform
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from urllib.request import urlopen
+
 from setuptools import Extension, setup, Command
 from setuptools.command.build_ext import build_ext
 
@@ -46,7 +46,7 @@ def install_cmake(cmake_version: str):
     if Path(fixed_name, 'bin').exists():
         return
     if not fixed_name.exists():
-        os.mkdir(fixed_name)
+        fixed_name.mkdir(parents=True)
     os_base = 'x86_64' if platform.machine() != 'aarch64' else 'aarch64'
     url = (f'https://github.com/Kitware/CMake/releases/download/v{cmake_version}/'
            f'cmake-{cmake_version}-linux-{os_base}.sh')
@@ -63,6 +63,8 @@ def install_cmake(cmake_version: str):
 
 class CMakeBuild(build_ext):
     def build_extension(self, ext: CMakeExtension) -> None:
+        if sys.platform.startswith('linux'):
+            install_cmake(CMAKE_VERSION)
         ext_fullpath = Path.cwd() / self.get_ext_fullpath(ext.name)
         extdir = ext_fullpath.parent.resolve()
         cfg = 'RelWithDebInfo' if 'b' in version else 'Release'
@@ -115,17 +117,16 @@ class SharedCommand(Command):
     def run(self):
         if sys.platform.startswith('linux'):
             install_cmake(CMAKE_VERSION)
-        cfg = 'RelWithDebInfo' if self.debug else 'Release'
         arch_outputs = [
             'auto',
         ]
         cmake_args = [
-            f'-DCMAKE_BUILD_TYPE={cfg}',
+            f'-DCMAKE_BUILD_TYPE=RelWithDebInfo',
             f'-DSTATIC_BUILD={"ON" if self.static else "OFF"}',
             f'-DCMAKE_TOOLCHAIN_FILE={Path(Path.cwd(), "cmake", "Toolchain.cmake")}',
         ]
         build_args = [
-            '--config', cfg,
+            '--config', 'RelWithDebInfo',
             f'-j{multiprocessing.cpu_count()}',
         ]
         build_temp = Path('build_lib')

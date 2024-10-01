@@ -5,6 +5,7 @@ set(BINDINGS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/bindings)
 if(IS_PYTHON)
     list(REMOVE_ITEM MODULE_SRC "${BINDINGS_DIR}/ntgcalls.cpp")
     pybind11_add_module(ntgcalls ${MODULE_SRC})
+    target_compile_definitions(ntgcalls PRIVATE VERSION_INFO=${PY_VERSION_INFO})
     add_compile_definitions(PYTHON_ENABLED)
 else ()
     if (STATIC_BUILD OR ANDROID)
@@ -22,7 +23,7 @@ else ()
     target_sources(ntgcalls PRIVATE ${MODULE_SRC})
     if (ANDROID)
         set_target_properties(ntgcalls PROPERTIES
-            ARCHIVE_OUTPUT_DIRECTORY "${android_loc}/library/src/main/jni/ntgcalls/${ANDROID_ABI}"
+            ARCHIVE_OUTPUT_DIRECTORY "${jni_loc}/ntgcalls/${ANDROID_ABI}"
         )
     else ()
         set(ARCHIVE_TYPE)
@@ -45,7 +46,9 @@ else ()
 endif ()
 target_include_directories(ntgcalls PRIVATE include)
 set_property(TARGET ntgcalls PROPERTY CXX_STANDARD 20 C_STANDARD 20)
+
 target_link_libraries(ntgcalls PRIVATE wrtc nlohmann_json::nlohmann_json)
+
 if(BOOST_ENABLED)
     target_link_libraries(ntgcalls PRIVATE Boost::filesystem)
 endif ()

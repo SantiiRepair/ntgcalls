@@ -2,31 +2,38 @@
 // Created by Laky64 on 15/03/2024.
 //
 
-#include "ntgcalls/instances/p2p_call.hpp"
+#include <ntgcalls/instances/p2p_call.hpp>
 
-#include "ntgcalls/exceptions.hpp"
-#include "ntgcalls/signaling/crypto/mod_exp_first.hpp"
-#include "ntgcalls/signaling/messages/candidates_message.hpp"
-#include "ntgcalls/signaling/messages/candidate_message.hpp"
-#include "ntgcalls/signaling/messages/initial_setup_message.hpp"
-#include "ntgcalls/signaling/messages/media_state_message.hpp"
-#include "ntgcalls/signaling/messages/message.hpp"
-#include "ntgcalls/signaling/messages/negotiate_channels_message.hpp"
-#include "ntgcalls/signaling/messages/rtc_description_message.hpp"
-#include "wrtc/interfaces/native_connection.hpp"
-#include "wrtc/utils/encryption.hpp"
+#include <ntgcalls/exceptions.hpp>
+#include <ntgcalls/signaling/crypto/mod_exp_first.hpp>
+#include <ntgcalls/signaling/messages/candidates_message.hpp>
+#include <ntgcalls/signaling/messages/candidate_message.hpp>
+#include <ntgcalls/signaling/messages/initial_setup_message.hpp>
+#include <ntgcalls/signaling/messages/media_state_message.hpp>
+#include <ntgcalls/signaling/messages/message.hpp>
+#include <ntgcalls/signaling/messages/negotiate_channels_message.hpp>
+#include <ntgcalls/signaling/messages/rtc_description_message.hpp>
+#include <wrtc/interfaces/native_connection.hpp>
+#include <wrtc/utils/encryption.hpp>
 
 namespace ntgcalls {
     P2PCall::~P2PCall() {
         signaling = nullptr;
     }
 
-    bytes::vector P2PCall::init(const DhConfig &dhConfig, const std::optional<bytes::vector> &g_a_hash, const MediaDescription &media) {
+    void P2PCall::init(const MediaDescription &media) {
         RTC_LOG(LS_INFO) << "Initializing P2P call";
         std::lock_guard lock(mutex);
+        streamManager->enableVideoSimulcast(false);
+        streamManager->setStreamSources(StreamManager::Mode::Playback, media);
+        RTC_LOG(LS_INFO) << "AVStream settings applied";
+    }
+
+    bytes::vector P2PCall::initExchange(const DhConfig& dhConfig, const std::optional<bytes::vector>& g_a_hash) {
+        std::lock_guard lock(mutex);
         if (g_a_or_b) {
-            RTC_LOG(LS_ERROR) << "Connection already made";
-            throw ConnectionError("Connection already made");
+            RTC_LOG(LS_ERROR) << "Exchange already initialized";
+            throw ConnectionError("Exchange already initialized");
         }
         auto first = signaling::ModExpFirst(dhConfig.g, dhConfig.p, dhConfig.random);
         if (first.modexp.empty()) {
@@ -40,8 +47,6 @@ namespace ntgcalls {
         }
         g_a_or_b = std::move(first.modexp);
         RTC_LOG(LS_INFO) << "P2P call initialized";
-        stream->setAVStream(media);
-        RTC_LOG(LS_INFO) << "AVStream settings applied";
         return g_a_hash ? g_a_or_b.value() : openssl::Sha256::Digest(g_a_or_b.value());
     }
 
@@ -93,6 +98,20 @@ namespace ntgcalls {
         };
     }
 
+    void P2PCall::skipExchange(bytes::vector encryptionKey, const bool isOutgoing) {
+        if (connection) {
+            RTC_LOG(LS_ERROR) << "Connection already made";
+            throw ConnectionError("Connection already made");
+        }
+        if (!skipExchangeKey.empty()) {
+            RTC_LOG(LS_ERROR) << "Key already exchanged";
+            throw ConnectionError("Key already exchanged");
+        }
+        skipExchangeKey = std::move(encryptionKey);
+        skipIsOutgoing = isOutgoing;
+        RTC_LOG(LS_INFO) << "Exchange skipped";
+    }
+
     void P2PCall::connect(const std::vector<RTCServer>& servers, const std::vector<std::string>& versions, const bool p2pAllowed) {
         RTC_LOG(LS_INFO) << "Connecting to P2P call, p2pAllowed: " << (p2pAllowed ? "true" : "false");
         std::lock_guard lock(mutex);
@@ -100,12 +119,16 @@ namespace ntgcalls {
             RTC_LOG(LS_ERROR) << "Connection already made";
             throw ConnectionError("Connection already made");
         }
-        if (!g_a_or_b || !key) {
-            RTC_LOG(LS_ERROR) << "Connection not initialized";
-            throw ConnectionNotFound("Connection not initialized");
-        }
         auto encryptionKey = std::make_shared<std::array<uint8_t, signaling::EncryptionKey::kSize>>();
-        memcpy(encryptionKey->data(), key.value().data(), signaling::EncryptionKey::kSize);
+        if (skipExchangeKey.empty()) {
+            if (!g_a_or_b || !key) {
+                RTC_LOG(LS_ERROR) << "Connection not initialized";
+                throw ConnectionNotFound("Connection not initialized");
+            }
+            memcpy(encryptionKey->data(), key.value().data(), signaling::EncryptionKey::kSize);
+        } else {
+            memcpy(encryptionKey->data(), skipExchangeKey.data(), signaling::EncryptionKey::kSize);
+        }
         protocolVersion = signaling::Signaling::matchVersion(versions);
         if (protocolVersion & signaling::Signaling::Version::V2Full) {
             connection = std::make_unique<wrtc::PeerConnection>(
@@ -158,11 +181,12 @@ namespace ntgcalls {
             signaling->send(message);
         });
         connection->onDataChannelOpened([this] {
-            sendMediaState(stream->getState());
+            sendMediaState(streamManager->getState());
             RTC_LOG(LS_INFO) << "Data channel opened";
         });
-        stream->addTracks(connection);
-        stream->onUpgrade([this] (const MediaState mediaState) {
+        streamManager->addTrack(StreamManager::Mode::Playback, StreamManager::Device::Microphone, connection);
+        streamManager->addTrack(StreamManager::Mode::Playback, StreamManager::Device::Camera, connection);
+        streamManager->onUpgrade([this] (const MediaState mediaState) {
             sendMediaState(mediaState);
         });
         if (type() == Type::Outgoing) {
@@ -337,13 +361,23 @@ namespace ntgcalls {
         }
         signaling::MediaStateMessage message;
         message.isMuted = mediaState.muted;
-        if (mediaState.videoStopped) {
+
+        if (!streamManager->hasDevice(StreamManager::Playback, StreamManager::Camera)) {
             message.videoState = signaling::MediaStateMessage::VideoState::Inactive;
         } else if (mediaState.videoPaused) {
             message.videoState = signaling::MediaStateMessage::VideoState::Suspended;
         } else {
             message.videoState = signaling::MediaStateMessage::VideoState::Active;
         }
+
+        if (!streamManager->hasDevice(StreamManager::Playback, StreamManager::Screen)) {
+            message.screencastState = signaling::MediaStateMessage::VideoState::Inactive;
+        } else if (mediaState.screencastPaused) {
+            message.screencastState = signaling::MediaStateMessage::VideoState::Suspended;
+        } else {
+            message.screencastState = signaling::MediaStateMessage::VideoState::Active;
+        }
+
         RTC_LOG(LS_INFO) << "Sending media state: " << bytes::to_string(message.serialize());
         connection->sendDataChannelMessage(message.serialize());
     }
@@ -403,11 +437,15 @@ namespace ntgcalls {
     }
 
     CallInterface::Type P2PCall::type() const {
-        if (g_a_or_b) {
-            if (g_a_hash) {
-                return Type::Incoming;
+        if (skipExchangeKey.empty()) {
+            if (g_a_or_b) {
+                if (g_a_hash) {
+                    return Type::Incoming;
+                }
+                return Type::Outgoing;
             }
-            return Type::Outgoing;
+        } else {
+            return skipIsOutgoing ? Type::Outgoing : Type::Incoming;
         }
         return Type::P2P;
     }

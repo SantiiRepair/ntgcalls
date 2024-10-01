@@ -7,7 +7,7 @@ endif ()
 include(ExternalProject)
 
 # https://chromiumdash.appspot.com/branches
-set(WEBRTC_REVISION m128.6613.2.0)
+set(WEBRTC_REVISION m128.6613.3.1)
 set(BOOST_REVISION 1.86.0)
 set(BOOST_LIBS filesystem)
 
@@ -18,13 +18,14 @@ if(DEFINED PY_VERSION_INFO)
     set(IS_PYTHON TRUE)
 endif()
 
-project(ntgcalls VERSION 1.2.3 LANGUAGES C CXX)
+project(ntgcalls VERSION 1.3.0.1 LANGUAGES C CXX)
 add_compile_definitions(NTG_VERSION="${CMAKE_PROJECT_VERSION}")
 
 find_package(Threads REQUIRED)
 
 get_filename_component(deps_loc     "deps" REALPATH)
 get_filename_component(android_loc  "android" REALPATH)
+get_filename_component(jni_loc      "${android_loc}/app/src/main/jni" REALPATH)
 get_filename_component(props_loc    "version.properties" REALPATH)
 
 include(cmake/FindWebRTC.cmake)

@@ -6,15 +6,16 @@
 
 #include <cstdint>
 
-#include "instances/call_interface.hpp"
+#include <ntgcalls/instances/call_interface.hpp>
 // ReSharper disable once CppUnusedIncludeDirective
-#include "models/auth_params.hpp"
-#include "models/dh_config.hpp"
-#include "models/protocol.hpp"
-#include "models/rtc_server.hpp"
-#include "utils/binding_utils.hpp"
-#include "utils/hardware_info.hpp"
-#include "utils/log_sink_impl.hpp"
+#include <ntgcalls/models/auth_params.hpp>
+#include <ntgcalls/models/dh_config.hpp>
+#include <ntgcalls/models/protocol.hpp>
+#include <ntgcalls/models/rtc_server.hpp>
+#include <ntgcalls/utils/binding_utils.hpp>
+#include <ntgcalls/utils/hardware_info.hpp>
+#include <ntgcalls/utils/log_sink_impl.hpp>
+#include <ntgcalls/devices/media_devices.hpp>
 
 #define CHECK_AND_THROW_IF_EXISTS(chatId) \
 if (exists(chatId)) { \
@@ -28,7 +29,7 @@ namespace ntgcalls {
 
     class NTgCalls {
         std::unordered_map<int64_t, std::shared_ptr<CallInterface>> connections;
-        wrtc::synchronized_callback<int64_t, Stream::Type> onEof;
+        wrtc::synchronized_callback<int64_t, StreamManager::Type, StreamManager::Device> onEof;
         wrtc::synchronized_callback<int64_t, MediaState> mediaStateCallback;
         wrtc::synchronized_callback<int64_t, CallInterface::ConnectionState> connectionChangeCallback;
         wrtc::synchronized_callback<int64_t, BYTES(bytes::binary)> emitCallback;
@@ -53,9 +54,13 @@ namespace ntgcalls {
 
         ~NTgCalls();
 
-        ASYNC_RETURN(bytes::vector) createP2PCall(int64_t userId, const DhConfig& dhConfig, const std::optional<BYTES(bytes::vector)> &g_a_hash, const MediaDescription& media);
+        ASYNC_RETURN(void) createP2PCall(int64_t userId, const MediaDescription& media);
+
+        ASYNC_RETURN(bytes::vector) initExchange(int64_t userId, const DhConfig& dhConfig, const std::optional<BYTES(bytes::vector)> &g_a_hash);
 
         ASYNC_RETURN(AuthParams) exchangeKeys(int64_t userId, const BYTES(bytes::vector) &g_a_or_b, int64_t fingerprint);
+
+        ASYNC_RETURN(void) skipExchange(int64_t userId, const BYTES(bytes::vector) &encryptionKey, bool isOutgoing);
 
         ASYNC_RETURN(void) connectP2P(int64_t userId, const std::vector<RTCServer>& servers, const std::vector<std::string>& versions, bool p2pAllowed);
 
@@ -63,7 +68,7 @@ namespace ntgcalls {
 
         ASYNC_RETURN(void) connect(int64_t chatId, const std::string& params);
 
-        ASYNC_RETURN(void) changeStream(int64_t chatId, const MediaDescription& media);
+        ASYNC_RETURN(void) setStreamSources(int64_t chatId, StreamManager::Mode mode, const MediaDescription& media);
 
         ASYNC_RETURN(bool) pause(int64_t chatId);
 
@@ -75,7 +80,7 @@ namespace ntgcalls {
 
         ASYNC_RETURN(void) stop(int64_t chatId);
 
-        ASYNC_RETURN(uint64_t) time(int64_t chatId);
+        ASYNC_RETURN(uint64_t) time(int64_t chatId, StreamManager::Mode mode);
 
         ASYNC_RETURN(MediaState) getState(int64_t chatId);
 
@@ -83,11 +88,13 @@ namespace ntgcalls {
 
         static std::string ping();
 
+        static MediaDevices getMediaDevices();
+
         static Protocol getProtocol();
 
         void onUpgrade(const std::function<void(int64_t, MediaState)>& callback);
 
-        void onStreamEnd(const std::function<void(int64_t, Stream::Type)>& callback);
+        void onStreamEnd(const std::function<void(int64_t, StreamManager::Type, StreamManager::Device)>& callback);
 
         void onConnectionChange(const std::function<void(int64_t, CallInterface::ConnectionState)>& callback);
 
@@ -95,7 +102,7 @@ namespace ntgcalls {
 
         ASYNC_RETURN(void) sendSignalingData(int64_t chatId, const BYTES(bytes::binary) &msgKey);
 
-        ASYNC_RETURN(std::map<int64_t, Stream::Status>) calls();
+        ASYNC_RETURN(std::map<int64_t, StreamManager::MediaStatus>) calls();
     };
 
 } // ntgcalls

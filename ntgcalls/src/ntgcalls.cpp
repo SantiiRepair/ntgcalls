@@ -2,14 +2,12 @@
 // Created by Laky64 on 22/08/2023.
 //
 
-#include "ntgcalls/ntgcalls.hpp"
-
-#include <iostream>
-
-#include "ntgcalls/exceptions.hpp"
-#include "ntgcalls/instances/group_call.hpp"
-#include "ntgcalls/instances/p2p_call.hpp"
-#include "ntgcalls/models/dh_config.hpp"
+#include <ntgcalls/ntgcalls.hpp>
+#include <ntgcalls/exceptions.hpp>
+#include <ntgcalls/devices/media_device.hpp>
+#include <ntgcalls/instances/group_call.hpp>
+#include <ntgcalls/instances/p2p_call.hpp>
+#include <ntgcalls/models/dh_config.hpp>
 
 namespace ntgcalls {
     NTgCalls::NTgCalls() {
@@ -37,10 +35,10 @@ namespace ntgcalls {
     }
 
     void NTgCalls::setupListeners(const int64_t chatId) {
-        connections[chatId]->onStreamEnd([this, chatId](const Stream::Type &type) {
-            WORKER("onStreamEnd", updateThread, this, chatId, type)
+        connections[chatId]->onStreamEnd([this, chatId](const StreamManager::Type &type, const StreamManager::Device &device) {
+            WORKER("onStreamEnd", updateThread, this, chatId, type, device)
             THREAD_SAFE
-            (void) onEof(chatId, type);
+            (void) onEof(chatId, type, device);
             END_THREAD_SAFE
             END_WORKER
         });
@@ -80,13 +78,19 @@ namespace ntgcalls {
         }
     }
 
-    ASYNC_RETURN(bytes::vector) NTgCalls::createP2PCall(const int64_t userId, const DhConfig& dhConfig, const std::optional<BYTES(bytes::vector)> &g_a_hash, const MediaDescription& media) {
-        SMART_ASYNC(this, userId, dhConfig, g_a_hash = CPP_BYTES(g_a_hash, bytes::vector), media)
+    ASYNC_RETURN(void) NTgCalls::createP2PCall(const int64_t userId, const MediaDescription& media) {
+        SMART_ASYNC(this, media, userId)
         std::lock_guard lock(mutex);
         CHECK_AND_THROW_IF_EXISTS(userId)
         connections[userId] = std::make_shared<P2PCall>(updateThread.get());
         setupListeners(userId);
-        const auto result = SafeCall<P2PCall>(connections[userId].get())->init(dhConfig, g_a_hash, media);
+        SafeCall<P2PCall>(connections[userId].get())->init(media);
+        END_ASYNC
+    }
+
+    ASYNC_RETURN(bytes::vector) NTgCalls::initExchange(const int64_t userId, const DhConfig& dhConfig, const std::optional<BYTES(bytes::vector)> &g_a_hash) {
+        SMART_ASYNC(this, userId, dhConfig, g_a_hash = CPP_BYTES(g_a_hash, bytes::vector))
+        const auto result = SafeCall<P2PCall>(safeConnection(userId))->initExchange(dhConfig, g_a_hash);
         THREAD_SAFE
         return CAST_BYTES(result);
         END_THREAD_SAFE
@@ -96,6 +100,12 @@ namespace ntgcalls {
     ASYNC_RETURN(AuthParams) NTgCalls::exchangeKeys(const int64_t userId, const BYTES(bytes::vector) &g_a_or_b, const int64_t fingerprint) {
         SMART_ASYNC(this, userId, g_a_or_b = CPP_BYTES(g_a_or_b, bytes::vector), fingerprint)
         return SafeCall<P2PCall>(safeConnection(userId))->exchangeKeys(g_a_or_b, fingerprint);
+        END_ASYNC
+    }
+
+    ASYNC_RETURN(void) NTgCalls::skipExchange(const int64_t userId, const BYTES(bytes::vector) &encryptionKey, const bool isOutgoing) {
+        SMART_ASYNC(this, userId, encryptionKey = CPP_BYTES(encryptionKey, bytes::vector), isOutgoing)
+        SafeCall<P2PCall>(safeConnection(userId))->skipExchange(encryptionKey, isOutgoing);
         END_ASYNC
     }
 
@@ -121,9 +131,9 @@ namespace ntgcalls {
         END_ASYNC
     }
 
-    ASYNC_RETURN(void) NTgCalls::changeStream(const int64_t chatId, const MediaDescription& media) {
-        SMART_ASYNC(this, chatId, media)
-        safeConnection(chatId)->changeStream(media);
+    ASYNC_RETURN(void) NTgCalls::setStreamSources(const int64_t chatId, const StreamManager::Mode mode, const MediaDescription& media) {
+        SMART_ASYNC(this, chatId, mode, media)
+        safeConnection(chatId)->setStreamSources(mode, media);
         END_ASYNC
     }
 
@@ -157,7 +167,7 @@ namespace ntgcalls {
         END_ASYNC
     }
 
-    void NTgCalls::onStreamEnd(const std::function<void(int64_t, Stream::Type)>& callback) {
+    void NTgCalls::onStreamEnd(const std::function<void(int64_t, StreamManager::Type, StreamManager::Device)>& callback) {
         std::lock_guard lock(mutex);
         onEof = callback;
     }
@@ -183,9 +193,9 @@ namespace ntgcalls {
         END_ASYNC
     }
 
-    ASYNC_RETURN(uint64_t) NTgCalls::time(const int64_t chatId) {
-        SMART_ASYNC(this, chatId)
-        return safeConnection(chatId)->time();
+    ASYNC_RETURN(uint64_t) NTgCalls::time(const int64_t chatId, const StreamManager::Mode mode) {
+        SMART_ASYNC(this, chatId, mode)
+        return safeConnection(chatId)->time(mode);
         END_ASYNC
     }
 
@@ -201,12 +211,15 @@ namespace ntgcalls {
         END_ASYNC
     }
 
-    ASYNC_RETURN(std::map<int64_t, Stream::Status>) NTgCalls::calls() {
+    ASYNC_RETURN(std::map<int64_t, StreamManager::MediaStatus>) NTgCalls::calls() {
         SMART_ASYNC(this)
-        std::map<int64_t, Stream::Status> statusList;
+        std::map<int64_t, StreamManager::MediaStatus> statusList;
         std::lock_guard lock(mutex);
         for (const auto& [fst, snd] : connections) {
-            statusList.emplace(fst, snd->status());
+            statusList.emplace(fst, StreamManager::MediaStatus{
+                snd->status(StreamManager::Mode::Playback),
+                snd->status(StreamManager::Mode::Capture)
+            });
         }
         return statusList;
         END_ASYNC
@@ -259,5 +272,11 @@ namespace ntgcalls {
 
     std::string NTgCalls::ping() {
         return "pong";
+    }
+
+    MediaDevices NTgCalls::getMediaDevices() {
+        return {
+            MediaDevice::GetAudioDevices(),
+        };
     }
 } // ntgcalls
