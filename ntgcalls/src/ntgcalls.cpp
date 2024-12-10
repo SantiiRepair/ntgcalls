@@ -8,6 +8,8 @@
 #include <ntgcalls/instances/group_call.hpp>
 #include <ntgcalls/instances/p2p_call.hpp>
 #include <ntgcalls/models/dh_config.hpp>
+#include <ntgcalls/utils/g_lib_loop_manager.hpp>
+#include <wrtc/video_factory/video_factory_config.hpp>
 
 namespace ntgcalls {
     NTgCalls::NTgCalls() {
@@ -51,19 +53,33 @@ namespace ntgcalls {
                 END_WORKER
             });
         }
-        connections[chatId]->onConnectionChange([this, chatId](const CallInterface::ConnectionState &state) {
+        connections[chatId]->onConnectionChange([this, chatId](const CallNetworkState &state) {
             WORKER("onConnectionChange", updateThread, this, chatId, state)
             THREAD_SAFE
-            switch (state) {
-                case CallInterface::ConnectionState::Closed:
-                case CallInterface::ConnectionState::Failed:
-                case CallInterface::ConnectionState::Timeout:
-                    remove(chatId);
-                    break;
-                default:
-                    break;
+            if (state.kind == CallNetworkState::Kind::Normal) {
+                switch (state.connectionState) {
+                    case CallNetworkState::ConnectionState::Closed:
+                    case CallNetworkState::ConnectionState::Failed:
+                    case CallNetworkState::ConnectionState::Timeout:
+                        remove(chatId);
+                        break;
+                    default:
+                        break;
+                }
             }
             (void) connectionChangeCallback(chatId, state);
+            END_THREAD_SAFE
+            END_WORKER
+        });
+        connections[chatId]->onFrame([this, chatId] (const int64_t sourceId, const StreamManager::Mode mode, const StreamManager::Device device, const bytes::binary& data, const wrtc::FrameData frameData) {
+            THREAD_SAFE
+            (void) frameCallback(chatId, sourceId, mode, device, CAST_BYTES(data), frameData);
+            END_THREAD_SAFE
+        });
+        connections[chatId]->onRemoteSourceChange([this, chatId](const RemoteSource &state) {
+            WORKER("onRemoteSourceChange", updateThread, this, chatId, state)
+            THREAD_SAFE
+            (void) remoteSourceCallback(chatId, state);
             END_THREAD_SAFE
             END_WORKER
         });
@@ -125,9 +141,27 @@ namespace ntgcalls {
         END_ASYNC
     }
 
-    ASYNC_RETURN(void) NTgCalls::connect(const int64_t chatId, const std::string& params) {
-        SMART_ASYNC(this, chatId, params)
-        SafeCall<GroupCall>(safeConnection(chatId))->connect(params);
+    ASYNC_RETURN(std::string) NTgCalls::initPresentation(const int64_t chatId) {
+        SMART_ASYNC(this, chatId)
+        return SafeCall<GroupCall>(safeConnection(chatId))->initPresentation();
+        END_ASYNC
+    }
+
+    ASYNC_RETURN(void) NTgCalls::connect(const int64_t chatId, const std::string& params, const bool isPresentation) {
+        SMART_ASYNC(this, chatId, params, isPresentation)
+        SafeCall<GroupCall>(safeConnection(chatId))->connect(params, isPresentation);
+        END_ASYNC
+    }
+
+    ASYNC_RETURN(uint32_t) NTgCalls::addIncomingVideo(const int64_t chatId, const std::string& endpoint, const std::vector<wrtc::SsrcGroup>& ssrcGroups) {
+        SMART_ASYNC(this, chatId, endpoint, ssrcGroups)
+        return SafeCall<GroupCall>(safeConnection(chatId))->addIncomingVideo(endpoint, ssrcGroups);
+        END_ASYNC
+    }
+
+    ASYNC_RETURN(bool) NTgCalls::removeIncomingVideo(const int64_t chatId, const std::string& endpoint) {
+        SMART_ASYNC(this, chatId, endpoint)
+        return SafeCall<GroupCall>(safeConnection(chatId))->removeIncomingVideo(endpoint);
         END_ASYNC
     }
 
@@ -167,6 +201,12 @@ namespace ntgcalls {
         END_ASYNC
     }
 
+    ASYNC_RETURN(void) NTgCalls::stopPresentation(const int64_t chatId) {
+        SMART_ASYNC(this, chatId)
+        SafeCall<GroupCall>(safeConnection(chatId))->stopPresentation(true);
+        END_ASYNC
+    }
+
     void NTgCalls::onStreamEnd(const std::function<void(int64_t, StreamManager::Type, StreamManager::Device)>& callback) {
         std::lock_guard lock(mutex);
         onEof = callback;
@@ -177,9 +217,14 @@ namespace ntgcalls {
         mediaStateCallback = callback;
     }
 
-    void NTgCalls::onConnectionChange(const std::function<void(int64_t, CallInterface::ConnectionState)>& callback) {
+    void NTgCalls::onConnectionChange(const std::function<void(int64_t, CallNetworkState)>& callback) {
        std::lock_guard lock(mutex);
        connectionChangeCallback = callback;
+    }
+
+    void NTgCalls::onFrame(const std::function<void(int64_t, int64_t, StreamManager::Mode, StreamManager::Device, const BYTES(bytes::binary)&, wrtc::FrameData)>& callback) {
+        std::lock_guard lock(mutex);
+        frameCallback = callback;
     }
 
     void NTgCalls::onSignalingData(const std::function<void(int64_t, const BYTES(bytes::binary)&)>& callback) {
@@ -187,9 +232,20 @@ namespace ntgcalls {
         emitCallback = callback;
     }
 
+    void NTgCalls::onRemoteSourceChange(const std::function<void(int64_t, RemoteSource)>& callback) {
+        std::lock_guard lock(mutex);
+        remoteSourceCallback = callback;
+    }
+
     ASYNC_RETURN(void) NTgCalls::sendSignalingData(const int64_t chatId, const BYTES(bytes::binary) &msgKey) {
         SMART_ASYNC(this, chatId, msgKey = CPP_BYTES(msgKey, bytes::binary))
         SafeCall<P2PCall>(safeConnection(chatId))->sendSignalingData(msgKey);
+        END_ASYNC
+    }
+
+    ASYNC_RETURN(void) NTgCalls::sendExternalFrame(const int64_t chatId, const StreamManager::Device device, const BYTES(bytes::binary) &data, const wrtc::FrameData frameData) {
+        SMART_ASYNC(this, chatId, device, data = CPP_BYTES(data, bytes::binary), frameData)
+        safeConnection(chatId)->sendExternalFrame(device, data, frameData);
         END_ASYNC
     }
 
@@ -259,6 +315,16 @@ namespace ntgcalls {
         };
     }
 
+#ifndef IS_ANDROID
+    void NTgCalls::enableGlibLoop(const bool enable) {
+        GLibLoopManager::EnableEventLoop(enable);
+    }
+
+    void NTgCalls::enableH264Encoder(const bool enable) {
+        wrtc::VideoFactoryConfig::EnableH264Encoder(enable);
+    }
+#endif
+
     template<typename DestCallType, typename BaseCallType>
     DestCallType* NTgCalls::SafeCall(BaseCallType* call) {
         if (!call) {
@@ -275,8 +341,20 @@ namespace ntgcalls {
     }
 
     MediaDevices NTgCalls::getMediaDevices() {
+        auto devices = MediaDevice::GetAudioDevices();
+        std::vector<DeviceInfo> microphones, speakers;
+        for (const auto& device : devices) {
+            if (json::parse(device.metadata)["is_microphone"]) {
+                microphones.emplace_back(device.name, device.metadata);
+            } else {
+                speakers.emplace_back(device.name, device.metadata);
+            }
+        }
         return {
-            MediaDevice::GetAudioDevices(),
+            microphones,
+            speakers,
+            MediaDevice::GetCameraDevices(),
+            MediaDevice::GetScreenDevices()
         };
     }
 } // ntgcalls

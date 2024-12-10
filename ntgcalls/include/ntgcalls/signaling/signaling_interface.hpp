@@ -5,15 +5,13 @@
 #pragma once
 #include <vector>
 #include <rtc_base/thread.h>
-
-#include "crypto/signaling_encryption.hpp"
-#include "crypto/auth_key.hpp"
+#include <ntgcalls/signaling/crypto/signaling_encryption.hpp>
 
 namespace signaling {
     using DataEmitter = std::function<void(const bytes::binary&)>;
     using DataReceiver = std::function<void(const std::vector<bytes::binary>&)>;
 
-    class SignalingInterface {
+    class SignalingInterface: public std::enable_shared_from_this<SignalingInterface> {
     public:
         virtual ~SignalingInterface();
 

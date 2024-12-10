@@ -3,6 +3,7 @@
 //
 
 #include <ntgcalls/devices/win_core_device_module.hpp>
+#include <ntgcalls/media/audio_sink.hpp>
 
 #ifdef IS_WINDOWS
 
@@ -12,8 +13,10 @@
 namespace ntgcalls {
 
     WinCoreDeviceModule::WinCoreDeviceModule(const AudioDescription* desc, const bool isCapture, BaseSink *sink):
+        BaseIO(sink),
         BaseDeviceModule(desc, isCapture),
         BaseReader(sink),
+        AudioMixer(sink),
         comInitializer(webrtc::ScopedCOMInitializer::kMTA),
         mmcssRegistration(L"Pro Audio")
     {
@@ -39,9 +42,10 @@ namespace ntgcalls {
     }
 
     WinCoreDeviceModule::~WinCoreDeviceModule() {
+        std::lock_guard queueLock(queueMutex);
         SetEvent(stopEvent.Get());
-        if (thread.joinable()) {
-            thread.join();
+        if (isCapture) {
+            thread.Finalize();
         }
         ResetEvent(stopEvent.Get());
         ResetEvent(restartEvent.Get());
@@ -80,12 +84,12 @@ namespace ntgcalls {
 
     void WinCoreDeviceModule::open() {
         init();
-        thread = std::thread(&WinCoreDeviceModule::runDataListener, this);
+        runDataListener();
     }
 
     void WinCoreDeviceModule::init() {
-        if (isInitialized) return;
-        isInitialized = true;
+        if (running) return;
+        running = true;
         const auto dataFlow = isCapture ? eCapture:eRender;
         std::string deviceId = webrtc::AudioDeviceName::kDefaultDeviceId;
         auto role = ERole();
@@ -126,7 +130,7 @@ namespace ntgcalls {
         }
 
         webrtc::AudioParameters params;
-        if (FAILED(core_audio_utility::GetPreferredAudioParameters(audioClient.Get(), &params, rate))) {
+        if (FAILED(core_audio_utility::GetPreferredAudioParameters(audioClient.Get(), &params))) {
             throw MediaDeviceError("Failed to get preferred audio parameters");
         }
 
@@ -142,9 +146,24 @@ namespace ntgcalls {
         format.dwChannelMask = f->nChannels == 1 ? KSAUDIO_SPEAKER_MONO : KSAUDIO_SPEAKER_STEREO;
         format.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
 
+        rate = params.sample_rate();
+        channels = params.channels();
+
+        const auto audioSink = dynamic_cast<AudioSink*>(sink);
+        if (auto config = audioSink->getConfig(); config->channelCount != channels || config->sampleRate != rate) {
+            RTC_LOG(LS_INFO) << "Updating Audio Configuration...";
+            config->channelCount = channels;
+            config->sampleRate = rate;
+            dynamic_cast<AudioSink*>(sink) -> setConfig(config);
+        }
+
         // TODO: Low latency mode is not supported yet
         if (FAILED(core_audio_utility::SharedModeInitialize(audioClient.Get(), &format, audioSamplesEvent, 0, true, &endpointBufferSizeFrames))) {
             throw MediaDeviceError("Failed to initialize shared mode");
+        }
+
+        if (!core_audio_utility::IsFormatSupported(audioClient.Get(), AUDCLNT_SHAREMODE_SHARED, &format)) {
+            throw MediaDeviceError("Unsupported audio format with " + std::to_string(channels) + " channels");
         }
 
         REFERENCE_TIME device_period;
@@ -174,6 +193,7 @@ namespace ntgcalls {
         if (isCapture) {
             audioCaptureClient = core_audio_utility::CreateCaptureClient(audioClient.Get());
         } else {
+            audioRenderClient = core_audio_utility::CreateRenderClient(audioClient.Get());
             core_audio_utility::FillRenderEndpointBufferWithSilence(audioClient.Get(), audioRenderClient.Get());
         }
         if (FAILED(static_cast<_com_error>(audioClient->Start()).Error())) {
@@ -187,6 +207,9 @@ namespace ntgcalls {
         }
         if (audioCaptureClient.Get()) {
             audioCaptureClient.Reset();
+        }
+        if (audioRenderClient.Get()) {
+            audioRenderClient.Reset();
         }
         if (audioClient) {
             audioClient.Reset();
@@ -269,35 +292,45 @@ namespace ntgcalls {
     }
 
     void WinCoreDeviceModule::runDataListener() {
-        bool streaming = true;
-        bool error = false;
-        HANDLE wait_array[] = {stopEvent.Get(), restartEvent.Get(), audioSamplesEvent.Get()};
-        while (streaming && !error) {
-            switch (WaitForMultipleObjects(arraysize(wait_array), wait_array, false, INFINITE)) {
-            case WAIT_OBJECT_0 + 0:
-                streaming = false;
-                break;
-            case WAIT_OBJECT_0 + 1:
-                error = !handleRestartEvent();
-                break;
-            case WAIT_OBJECT_0 + 2:
-                error = !handleDataEvent();
-                break;
-            default:
-                error = true;
-                break;
-            }
-        }
-        if (streaming && error) {
-            if (const _com_error result = audioClient->Stop(); FAILED(result.Error())) {
-                RTC_LOG(LS_ERROR) << "IAudioClient::Stop failed: " << core_audio_utility::ErrorToString(result);
-            }
-        }
+        thread = rtc::PlatformThread::SpawnJoinable(
+            [this] {
+                bool streaming = true;
+                bool error = false;
+                HANDLE waitArray[] = {stopEvent.Get(), restartEvent.Get(), audioSamplesEvent.Get()};
+                while (streaming && !error) {
+                    switch (WaitForMultipleObjects(arraysize(waitArray), waitArray, false, INFINITE)) {
+                    case WAIT_OBJECT_0 + 0:
+                        streaming = false;
+                        break;
+                    case WAIT_OBJECT_0 + 1:
+                        error = !handleRestartEvent();
+                        break;
+                    case WAIT_OBJECT_0 + 2:
+                        if (isCapture) {
+                            error = !handleDataRecord();
+                        } else {
+                            error = !handleDataPlayback();
+                        }
+                        break;
+                    default:
+                        error = true;
+                        break;
+                    }
+                }
+                if (streaming && error) {
+                    if (const _com_error result = audioClient->Stop(); FAILED(result.Error())) {
+                        RTC_LOG(LS_ERROR) << "IAudioClient::Stop failed: " << core_audio_utility::ErrorToString(result);
+                    }
+                }
+            },
+            "WinCoreAudio",
+            rtc::ThreadAttributes().SetPriority(rtc::ThreadPriority::kRealtime)
+        );
     }
 
     // ReSharper disable once CppDFAUnreachableFunctionCall
-    bool WinCoreDeviceModule::handleDataEvent() const {
-        if (!isInitialized) {
+    bool WinCoreDeviceModule::handleDataRecord() const {
+        if (!running) {
             return false;
         }
         UINT32 numFramesInNextPacket = 0;
@@ -327,7 +360,7 @@ namespace ntgcalls {
             } else {
                 auto buffer = bytes::make_unique_binary(format.Format.nBlockAlign * numFramesToRead);
                 memcpy(buffer.get(), audioData, format.Format.nBlockAlign * numFramesToRead);
-                dataCallback(std::move(buffer));
+                dataCallback(std::move(buffer), {});
             }
             error = audioCaptureClient->ReleaseBuffer(numFramesToRead);
             if (FAILED(error.Error())) {
@@ -341,9 +374,52 @@ namespace ntgcalls {
         return true;
     }
 
+    bool WinCoreDeviceModule::handleDataPlayback() {
+        if (!running) {
+            return false;
+        }
+        UINT32 numUnreadFrames = 0;
+        _com_error error = audioClient->GetCurrentPadding(&numUnreadFrames);
+        if (error.Error() == AUDCLNT_E_DEVICE_INVALIDATED) {
+            RTC_DLOG(LS_ERROR) << "AUDCLNT_E_DEVICE_INVALIDATED";
+            return false;
+        }
+        if (FAILED(error.Error())) {
+            RTC_LOG(LS_ERROR) << "IAudioClient::GetCurrentPadding failed: " << core_audio_utility::ErrorToString(error);
+            return false;
+        }
+        const UINT32 numRequestedFrames = endpointBufferSizeFrames - numUnreadFrames;
+        if (numRequestedFrames == 0) {
+            RTC_DLOG(LS_WARNING)
+                << "Audio thread is signaled but no new audio samples are needed";
+            return true;
+        }
+        uint8_t* audioData;
+        error = audioRenderClient->GetBuffer(numRequestedFrames, &audioData);
+        if (FAILED(error.Error())) {
+            RTC_LOG(LS_ERROR) << "IAudioRenderClient::GetBuffer failed: " << core_audio_utility::ErrorToString(error);
+            return false;
+        }
+        std::lock_guard queueLock(queueMutex);
+        if (!queue.empty()) {
+            memcpy(audioData, queue.front().get(), numRequestedFrames * format.Format.nBlockAlign);
+            queue.pop();
+        }
+        error = audioRenderClient->ReleaseBuffer(numRequestedFrames, 0);
+        if (FAILED(error.Error())) {
+            RTC_LOG(LS_ERROR) << "IAudioRenderClient::ReleaseBuffer failed: " << core_audio_utility::ErrorToString(error);
+        }
+        return true;
+    }
+
+    void WinCoreDeviceModule::onData(bytes::unique_binary data) {
+        std::lock_guard queueLock(queueMutex);
+        queue.emplace(std::move(data));
+    }
+
     void WinCoreDeviceModule::stop() {
-        if (!isInitialized) return;
-        isInitialized = false;
+        if (!running) return;
+        running = false;
         if (FAILED(static_cast<_com_error>(audioClient->Stop()).Error())) {
             throw MediaDeviceError("Failed to stop audio client");
         }

@@ -6,8 +6,7 @@
 
 #include <mutex>
 #include <api/peer_connection_interface.h>
-
-#include "peer_connection_factory_with_context.hpp"
+#include <wrtc/interfaces/peer_connection/peer_connection_factory_with_context.hpp>
 
 namespace wrtc {
 
@@ -18,8 +17,6 @@ namespace wrtc {
         ~PeerConnectionFactory() override;
 
         static rtc::scoped_refptr<PeerConnectionFactory> GetOrCreateDefault();
-
-        static void UnRef();
 
         rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory();
 
@@ -42,9 +39,12 @@ namespace wrtc {
         [[nodiscard]] const webrtc::Environment& environment() const;
 
         [[nodiscard]] webrtc::MediaFactory* mediaFactory() const;
+
+        [[nodiscard]] std::vector<webrtc::SdpVideoFormat> getSupportedVideoFormats() const;
+
     private:
         static std::mutex _mutex;
-        static int _references;
+        static bool initialized;
         void *jniEnv;
         static rtc::scoped_refptr<PeerConnectionFactory> _default;
 
@@ -55,6 +55,8 @@ namespace wrtc {
 
         rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory_;
         rtc::scoped_refptr<webrtc::AudioDeviceModule> _audioDeviceModule;
+
+        std::vector<webrtc::SdpVideoFormat> supportedVideoFormats;
     };
 
 } // wrtc

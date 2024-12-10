@@ -27,7 +27,7 @@
     </a>
 </p>
 
-# NativeTgCalls [![PyPI - Version](https://img.shields.io/pypi/v/ntgcalls?logo=python&logoColor=%23959DA5&label=pypi&labelColor=%23282f37)](https://pypi.org/project/ntgcalls/) [![Downloads](https://pepy.tech/badge/ntgcalls)](https://pepy.tech/project/ntgcalls)
+# NativeTgCalls [![PyPI - Version](https://img.shields.io/pypi/v/ntgcalls?logo=python&logoColor=%23959DA5&label=pypi&labelColor=%23282f37)](https://pypi.org/project/ntgcalls/) [![Downloads](https://img.shields.io/pepy/dt/ntgcalls?logoColor=%23959DA5&labelColor=%23282f37&color=%2328A745)](https://pepy.tech/project/ntgcalls)
 
 Welcome to NativeTgCalls, an innovative open-source project. NativeTgCalls represents the next evolution in Telegram calling, building on the foundation laid by PyTgCalls.
 
@@ -88,7 +88,7 @@ For developers looking to use NativeTgCalls with C and C++, we provide C Binding
 1. Ensure you are in the root directory of the NativeTgCalls project.
 2. Run the following command to generate the shared libs:
    ```shell
-   python3 setup.py build_shared
+   python3 setup.py build_lib --shared
    ```
 3. Upon successful execution, a shared library will be generated in the "shared-output" directory. 
    You can now use this library to develop applications with NativeTgCalls.

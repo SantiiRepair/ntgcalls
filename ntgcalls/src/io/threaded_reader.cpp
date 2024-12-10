@@ -11,29 +11,36 @@ namespace ntgcalls {
     }
 
     ThreadedReader::~ThreadedReader() {
-        running = false;
-        cv.notify_all();
-        for (auto& thread : bufferThreads) {
-            thread.Finalize();
+        exiting = true;
+        const bool wasRunning = running;
+        if (running) {
+            running = false;
+            cv.notify_all();
+        }
+        if (wasRunning) {
+            for (auto& thread : bufferThreads) {
+                thread.Finalize();
+            }
         }
     }
 
-    void ThreadedReader::open() {
+    void ThreadedReader::run(const std::function<bytes::unique_binary(int64_t)>& readCallback) {
+        if (running) return;
         const size_t bufferCount = bufferThreads.capacity();
         running = true;
-        auto frameSize = sink->frameSize();
         auto frameTime = sink->frameTime();
         for (size_t i = 0; i < bufferCount; ++i) {
             bufferThreads.push_back(
                 rtc::PlatformThread::SpawnJoinable(
-                    [this, i, frameSize, frameTime] {
+                    [this, i, bufferCount, frameSize = sink->frameSize(), frameTime, readCallback] {
                         activeBufferCount++;
                         while (running) {
                             std::unique_lock lock(mtx);
                             bytes::unique_binary data;
                             try {
-                                data = std::move(read(frameSize));
+                                data = std::move(readCallback(frameSize));
                             } catch (...) {
+                                running = false;
                                 break;
                             }
                             cv.wait(lock, [this, i] {
@@ -43,15 +50,18 @@ namespace ntgcalls {
                             if (auto waitTime = lastTime - std::chrono::high_resolution_clock::now() + frameTime; waitTime.count() > 0) {
                                 std::this_thread::sleep_for(waitTime);
                             }
-                            dataCallback(std::move(data));
+                            dataCallback(std::move(data), {});
                             lastTime = std::chrono::high_resolution_clock::now();
-                            activeBuffer = (activeBuffer + 1) % bufferThreads.size();
+                            activeBuffer = (activeBuffer + 1) % bufferCount;
                             lock.unlock();
                             cv.notify_all();
                         }
+                        std::lock_guard lock(mtx);
                         activeBufferCount--;
                         if (activeBufferCount == 0) {
-                            (void) eofCallback();
+                            if (!exiting) (void) eofCallback();
+                        } else {
+                            cv.notify_all();
                         }
                     },
                     "ThreadedReader_" + std::to_string(bufferCount),

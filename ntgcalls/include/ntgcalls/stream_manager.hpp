@@ -4,16 +4,18 @@
 
 #pragma once
 
+#include <condition_variable>
 #include <shared_mutex>
 #include <wrtc/wrtc.hpp>
 #include <ntgcalls/io/base_reader.hpp>
+#include <ntgcalls/io/base_writer.hpp>
 #include <ntgcalls/media/base_sink.hpp>
 #include <ntgcalls/models/media_description.hpp>
 #include <ntgcalls/models/media_state.hpp>
 
 namespace ntgcalls {
 
-    class StreamManager {
+    class StreamManager: public std::enable_shared_from_this<StreamManager> {
     public:
         enum Type {
             Audio,
@@ -50,6 +52,8 @@ namespace ntgcalls {
 
         void setStreamSources(Mode mode, const MediaDescription& desc);
 
+        void optimizeSources(wrtc::NetworkInterface* pc) const;
+
         MediaState getState();
 
         bool pause();
@@ -68,11 +72,15 @@ namespace ntgcalls {
 
         void onUpgrade(const std::function<void(MediaState)> &callback);
 
-        void addTrack(Mode mode, Device device, const std::unique_ptr<wrtc::NetworkInterface> &pc);
+        void addTrack(Mode mode, Device device, wrtc::NetworkInterface* pc);
 
         void start();
 
         bool hasDevice(Mode mode, Device device) const;
+
+        void onFrame(const std::function<void(int64_t, Mode, Device, const bytes::binary&, wrtc::FrameData)>& callback);
+
+        void sendExternalFrame(Device device, const bytes::binary& data, wrtc::FrameData frameData);
 
     private:
         rtc::Thread* workerThread;
@@ -80,9 +88,16 @@ namespace ntgcalls {
         std::map<std::pair<Mode, Device>, std::unique_ptr<BaseSink>> streams;
         std::map<std::pair<Mode, Device>, std::unique_ptr<wrtc::MediaTrackInterface>> tracks;
         std::map<Device, std::unique_ptr<BaseReader>> readers;
+        std::map<Device, std::unique_ptr<BaseWriter>> writers;
+        std::set<Device> externalWriters;
+        std::set<Device> externalReaders;
+        mutable std::mutex syncMutex;
+        std::condition_variable syncCV;
+        std::set<Device> syncReaders;
         std::shared_mutex mutex;
         wrtc::synchronized_callback<Type, Device> onEOF;
         wrtc::synchronized_callback<MediaState> onChangeStatus;
+        wrtc::synchronized_callback<int64_t, Mode, Device, bytes::binary, wrtc::FrameData> frameCallback;
 
         template<typename SinkType, typename DescriptionType>
         void setConfig(Mode mode, Device device, const std::optional<DescriptionType>& desc);

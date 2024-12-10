@@ -5,7 +5,7 @@
 #include <wrtc/interfaces/media/channels/outgoing_video_channel.hpp>
 
 #include <wrtc/interfaces/native_connection.hpp>
-#include "api/video/builtin_video_bitrate_allocator_factory.h"
+#include <api/video/builtin_video_bitrate_allocator_factory.h>
 
 namespace wrtc {
     OutgoingVideoChannel::OutgoingVideoChannel(
@@ -25,7 +25,7 @@ namespace wrtc {
             cricket::MediaConfig(),
             std::to_string(_ssrc),
             false,
-            NativeConnection::getDefaultCryptoOptions(),
+            NativeNetworkInterface::getDefaultCryptoOptions(),
             videoOptions,
             bitrateAllocatorFactory.get()
         );
@@ -70,7 +70,7 @@ namespace wrtc {
         outgoingVideoDescription->set_codecs(codecs);
         outgoingVideoDescription->set_bandwidth(-1);
         cricket::StreamParams videoSendStreamParams;
-        for (const auto &[ssrcs, semantics] : mediaContent.ssrcGroups) {
+        for (const auto &[semantics, ssrcs] : mediaContent.ssrcGroups) {
             for (auto ssrc : ssrcs) {
                 if (!videoSendStreamParams.has_ssrc(ssrc)) {
                     videoSendStreamParams.ssrcs.push_back(ssrc);

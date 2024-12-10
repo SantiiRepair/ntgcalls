@@ -3,13 +3,15 @@
 //
 
 #pragma once
-#include "device_info.hpp"
+#include <ntgcalls/devices/device_info.hpp>
 
 namespace ntgcalls {
 
     struct MediaDevices {
-        std::vector<DeviceInfo> audio{};
-        std::vector<DeviceInfo> video{};
+        std::vector<DeviceInfo> microphone{};
+        std::vector<DeviceInfo> speaker{};
+        std::vector<DeviceInfo> camera{};
+        std::vector<DeviceInfo> screen{};
     };
 
 } // ntgcalls

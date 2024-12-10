@@ -40,10 +40,6 @@ namespace wrtc {
         peerConnection = result.MoveValue();
     }
 
-    PeerConnection::~PeerConnection() {
-        close();
-    }
-
     std::optional<Description> PeerConnection::localDescription() const {
         if (peerConnection) {
             if (const auto raw_description = peerConnection->local_description()) {
@@ -119,7 +115,7 @@ namespace wrtc {
         peerConnection->AddIceCandidate(parseIceCandidate(rawCandidate));
     }
 
-    std::unique_ptr<MediaTrackInterface> PeerConnection::addTrack(const rtc::scoped_refptr<webrtc::MediaStreamTrackInterface>& track) {
+    std::unique_ptr<MediaTrackInterface> PeerConnection::addOutgoingTrack(const rtc::scoped_refptr<webrtc::MediaStreamTrackInterface>& track) {
         if (!peerConnection) {
             throw RTCException("Cannot add track; PeerConnection is closed");
         }

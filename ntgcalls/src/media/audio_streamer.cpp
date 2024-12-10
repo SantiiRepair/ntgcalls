@@ -17,12 +17,12 @@ namespace ntgcalls {
         return audio->createTrack();
     }
 
-    void AudioStreamer::sendData(uint8_t* sample, const int64_t absolute_capture_timestamp_ms) {
+    void AudioStreamer::sendData(uint8_t* sample, const wrtc::FrameData additionalData) {
         frames++;
         auto event = wrtc::RTCOnDataEvent(sample, frameSize() / (2 * description->channelCount));
         event.channelCount = description->channelCount;
         event.sampleRate = description->sampleRate;
-        event.bitsPerSample = description->bitsPerSample;
-        audio->OnData(event, absolute_capture_timestamp_ms);
+        event.bitsPerSample = 16;
+        audio->OnData(event, additionalData);
     }
 }

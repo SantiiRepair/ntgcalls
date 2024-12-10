@@ -7,13 +7,13 @@
 #include <optional>
 #include <api/peer_connection_interface.h>
 
-#include "network_interface.hpp"
 #include <wrtc/enums.hpp>
-#include <wrtc/utils/syncronized_callback.hpp>
-#include <wrtc/models/rtc_session_description.hpp>
-#include <wrtc/models/ice_candidate.hpp>
-#include "peer_connection/data_channel_observer_impl.hpp"
 #include <wrtc/utils/binary.hpp>
+#include <wrtc/models/ice_candidate.hpp>
+#include <wrtc/utils/syncronized_callback.hpp>
+#include <wrtc/interfaces/network_interface.hpp>
+#include <wrtc/models/rtc_session_description.hpp>
+#include <wrtc/interfaces/peer_connection/data_channel_observer_impl.hpp>
 
 namespace wrtc {
 
@@ -21,7 +21,7 @@ namespace wrtc {
     public:
         explicit PeerConnection(const webrtc::PeerConnectionInterface::IceServers& servers = {}, bool allowAttachDataChannel = false, bool allowP2P = true);
 
-        ~PeerConnection() override;
+        void open() override{}
 
         std::optional<Description> localDescription() const;
 
@@ -33,7 +33,7 @@ namespace wrtc {
 
         void setRemoteDescription(const Description &description) const;
 
-        std::unique_ptr<MediaTrackInterface> addTrack(const rtc::scoped_refptr<webrtc::MediaStreamTrackInterface>& track) override;
+        std::unique_ptr<MediaTrackInterface> addOutgoingTrack(const rtc::scoped_refptr<webrtc::MediaStreamTrackInterface>& track) override;
 
         void addIceCandidate(const IceCandidate& rawCandidate) const override;
 
@@ -56,6 +56,10 @@ namespace wrtc {
         void onRenegotiationNeeded(const std::function<void()> &callback);
 
         void onDataChannelMessage(const std::function<void(bytes::binary)> &callback);
+
+
+        void addIncomingAudioTrack(const std::weak_ptr<RemoteAudioSink>& sink) override {}
+        void addIncomingVideoTrack(const std::weak_ptr<RemoteVideoSink>& sink, bool isScreenCast) override {}
 
     private:
         rtc::scoped_refptr<webrtc::PeerConnectionInterface> peerConnection;

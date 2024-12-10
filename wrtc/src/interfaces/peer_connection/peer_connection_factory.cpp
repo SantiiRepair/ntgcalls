@@ -12,13 +12,15 @@
 #include <api/audio_codecs/builtin_audio_decoder_factory.h>
 #include <pc/media_factory.h>
 #include <system_wrappers/include/field_trial.h>
+#include <wrtc/interfaces/media/audio_device_module.hpp>
 #include <wrtc/utils/java_context.hpp>
 
 #include <wrtc/video_factory/video_factory_config.hpp>
+#include <wrtc/video_factory/hardware/android/video_factory.hpp>
 
 namespace wrtc {
     std::mutex PeerConnectionFactory::_mutex{};
-    int PeerConnectionFactory::_references = 0;
+    bool PeerConnectionFactory::initialized = false;
     rtc::scoped_refptr<PeerConnectionFactory> PeerConnectionFactory::_default = nullptr;
 
     PeerConnectionFactory::PeerConnectionFactory() {
@@ -51,17 +53,22 @@ namespace wrtc {
         jniEnv = GetJNIEnv();
         dependencies.adm = worker_thread_->BlockingCall([&] {
             if (!_audioDeviceModule)
-                _audioDeviceModule = webrtc::AudioDeviceModule::Create(webrtc::AudioDeviceModule::kDummyAudio, dependencies.task_queue_factory.get());
+                _audioDeviceModule = rtc::make_ref_counted<AudioDeviceModule>();
             return _audioDeviceModule;
         });
-        auto config = VideoFactoryConfig(jniEnv);
         dependencies.audio_encoder_factory = webrtc::CreateBuiltinAudioEncoderFactory();
         dependencies.audio_decoder_factory = webrtc::CreateBuiltinAudioDecoderFactory();
+#ifdef IS_ANDROID
+        dependencies.video_encoder_factory = android::CreateVideoEncoderFactory(static_cast<JNIEnv*>(jniEnv));
+        dependencies.video_decoder_factory = android::CreateVideoDecoderFactory(static_cast<JNIEnv*>(jniEnv));
+#else
+        auto config = VideoFactoryConfig();
         dependencies.video_encoder_factory = config.CreateVideoEncoderFactory();
         dependencies.video_decoder_factory = config.CreateVideoDecoderFactory();
+#endif
         dependencies.audio_mixer = nullptr;
         dependencies.audio_processing = webrtc::AudioProcessingBuilder().Create();
-
+        supportedVideoFormats = dependencies.video_encoder_factory->GetSupportedFormats();
         EnableMedia(dependencies);
         if (!factory_) {
             factory_ = CreateModularPeerConnectionFactoryWithContext(std::move(dependencies), connection_context_);
@@ -130,24 +137,19 @@ namespace wrtc {
         return connection_context_->call_factory();
     }
 
+    std::vector<webrtc::SdpVideoFormat> PeerConnectionFactory::getSupportedVideoFormats() const {
+        return supportedVideoFormats;
+    }
+
     rtc::scoped_refptr<PeerConnectionFactory> PeerConnectionFactory::GetOrCreateDefault() {
         std::lock_guard lock(_mutex);
-        _references++;
-        if (_references == 1) {
+        if (initialized == false) {
 #ifndef IS_ANDROID
             rtc::InitializeSSL();
 #endif
+            initialized = true;
             _default = rtc::scoped_refptr<PeerConnectionFactory>(new rtc::RefCountedObject<PeerConnectionFactory>());
         }
         return _default;
-    }
-
-    void PeerConnectionFactory::UnRef() {
-        std::lock_guard lock(_mutex);
-        _references--;
-        if (!_references) {
-            _default = nullptr;
-            rtc::CleanupSSL();
-        }
     }
 } // wrtc

@@ -35,7 +35,7 @@ namespace wrtc {
             return;
         }
         dataChannel->RegisterObserver(this);
-        AddSctpDataStream(webrtc::StreamId(0));
+        AddSctpDataStream(webrtc::StreamId(0), webrtc::PriorityValue(webrtc::Priority::kVeryLow));
     }
 
     SctpDataChannelProviderInterfaceImpl::~SctpDataChannelProviderInterfaceImpl() {
@@ -73,6 +73,7 @@ namespace wrtc {
 
     void SctpDataChannelProviderInterfaceImpl::OnMessage(const webrtc::DataBuffer& buffer) {
         assert(networkThread->IsCurrent());
+        (void) onMessageReceivedCallback(bytes::binary(buffer.data.data(), buffer.data.data() + buffer.data.size()));
     }
 
     webrtc::RTCError SctpDataChannelProviderInterfaceImpl::SendData(const webrtc::StreamId sid, const webrtc::SendDataParams& params, const rtc::CopyOnWriteBuffer& payload) {
@@ -80,9 +81,9 @@ namespace wrtc {
         return sctpTransport->SendData(sid.stream_id_int(), params, payload);
     }
 
-    void SctpDataChannelProviderInterfaceImpl::AddSctpDataStream(const webrtc::StreamId sid) {
+    void SctpDataChannelProviderInterfaceImpl::AddSctpDataStream(const webrtc::StreamId sid, const webrtc::PriorityValue priority) {
         assert(networkThread->IsCurrent());
-        sctpTransport->OpenStream(sid.stream_id_int());
+        sctpTransport->OpenStream(sid.stream_id_int(), priority);
     }
 
     void SctpDataChannelProviderInterfaceImpl::RemoveSctpDataStream(webrtc::StreamId sid) {
@@ -113,7 +114,19 @@ namespace wrtc {
         }
     }
 
+    void SctpDataChannelProviderInterfaceImpl::OnTransportClosed(const webrtc::RTCError) {
+        (void) onClosedCallback();
+    }
+
     void SctpDataChannelProviderInterfaceImpl::onStateChanged(const std::function<void(bool)>& callback) {
         onStateChangedCallback = callback;
+    }
+
+    void SctpDataChannelProviderInterfaceImpl::onClosed(const std::function<void()>& callback) {
+        onClosedCallback = callback;
+    }
+
+    void SctpDataChannelProviderInterfaceImpl::onMessageReceived(const std::function<void(const bytes::binary&)>& callback) {
+        onMessageReceivedCallback = callback;
     }
 } // wrtc

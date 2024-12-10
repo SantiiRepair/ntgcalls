@@ -25,7 +25,8 @@ namespace ntgcalls {
         RTC_LOG(LS_INFO) << "Initializing P2P call";
         std::lock_guard lock(mutex);
         streamManager->enableVideoSimulcast(false);
-        streamManager->setStreamSources(StreamManager::Mode::Playback, media);
+        streamManager->setStreamSources(StreamManager::Mode::Capture, media);
+        streamManager->setStreamSources(StreamManager::Mode::Playback, MediaDescription());
         RTC_LOG(LS_INFO) << "AVStream settings applied";
     }
 
@@ -131,11 +132,11 @@ namespace ntgcalls {
         }
         protocolVersion = signaling::Signaling::matchVersion(versions);
         if (protocolVersion & signaling::Signaling::Version::V2Full) {
-            connection = std::make_unique<wrtc::PeerConnection>(
-            RTCServer::toIceServers(servers),
-            true,
+            connection = std::make_shared<wrtc::PeerConnection>(
+                RTCServer::toIceServers(servers),
+                true,
             p2pAllowed
-        );
+            );
             Safe<wrtc::PeerConnection>(connection)->onRenegotiationNeeded([this] {
                 if (makingNegotation) {
                     RTC_LOG(LS_INFO) << "Renegotiation needed";
@@ -143,12 +144,14 @@ namespace ntgcalls {
                 }
             });
         } else {
-            connection = std::make_unique<wrtc::NativeConnection>(
+            connection = std::make_shared<wrtc::NativeConnection>(
                 RTCServer::toRtcServers(servers),
                 p2pAllowed,
                 type() == Type::Outgoing
             );
         }
+        connection->open();
+        streamManager->optimizeSources(connection.get());
         signaling = signaling::Signaling::Create(
             protocolVersion,
             connection->networkThread(),
@@ -164,7 +167,12 @@ namespace ntgcalls {
                 }
             }
         );
-        connection->onIceCandidate([this](const wrtc::IceCandidate& candidate) {
+        std::weak_ptr weakSignaling = signaling;
+        connection->onIceCandidate([this, weakSignaling](const wrtc::IceCandidate& candidate) {
+            const auto signaling = weakSignaling.lock();
+            if (!signaling) {
+                return;
+            }
             bytes::binary message;
             if (protocolVersion & signaling::Signaling::Version::V2Full) {
                 signaling::CandidateMessage candMess;
@@ -184,8 +192,13 @@ namespace ntgcalls {
             sendMediaState(streamManager->getState());
             RTC_LOG(LS_INFO) << "Data channel opened";
         });
-        streamManager->addTrack(StreamManager::Mode::Playback, StreamManager::Device::Microphone, connection);
-        streamManager->addTrack(StreamManager::Mode::Playback, StreamManager::Device::Camera, connection);
+        connection->onDataChannelMessage([this](const bytes::binary& data) {
+            processSignalingData(data);
+        });
+        streamManager->addTrack(StreamManager::Mode::Capture, StreamManager::Device::Microphone, connection.get());
+        streamManager->addTrack(StreamManager::Mode::Capture, StreamManager::Device::Camera, connection.get());
+        streamManager->addTrack(StreamManager::Mode::Playback, StreamManager::Device::Microphone, connection.get());
+        streamManager->addTrack(StreamManager::Mode::Playback, StreamManager::Device::Camera, connection.get());
         streamManager->onUpgrade([this] (const MediaState mediaState) {
             sendMediaState(mediaState);
         });
@@ -204,6 +217,9 @@ namespace ntgcalls {
     }
 
     void P2PCall::processSignalingData(const bytes::binary& buffer) {
+        if (signaling == nullptr) {
+            return;
+        }
         RTC_LOG(LS_INFO) << "processSignalingData: " << std::string(buffer.begin(), buffer.end());
         try {
             switch (signaling::Message::type(buffer)) {
@@ -294,6 +310,25 @@ namespace ntgcalls {
                 }
                 break;
             }
+            case signaling::Message::Type::MediaState: {
+                const auto message = signaling::MediaStateMessage::deserialize(buffer);
+                const auto cameraState = parseVideoState(message->videoState);
+                const auto screenState = parseVideoState(message->screencastState);
+                const auto micState = message->isMuted ? RemoteSource::State::Inactive : RemoteSource::State::Active;
+                if (lastCameraState != cameraState) {
+                    lastCameraState = cameraState;
+                    (void) remoteSourceCallback({0, cameraState, StreamManager::Device::Camera});
+                }
+                if (lastScreenState != screenState) {
+                    lastScreenState = screenState;
+                    (void) remoteSourceCallback({0, screenState, StreamManager::Device::Screen});
+                }
+                if (lastMicState != micState) {
+                    lastMicState = micState;
+                    (void) remoteSourceCallback({0, micState, StreamManager::Device::Microphone});
+                }
+                break;
+            }
             default:
                 break;
             }
@@ -362,7 +397,7 @@ namespace ntgcalls {
         signaling::MediaStateMessage message;
         message.isMuted = mediaState.muted;
 
-        if (!streamManager->hasDevice(StreamManager::Playback, StreamManager::Camera)) {
+        if (!streamManager->hasDevice(StreamManager::Capture, StreamManager::Camera)) {
             message.videoState = signaling::MediaStateMessage::VideoState::Inactive;
         } else if (mediaState.videoPaused) {
             message.videoState = signaling::MediaStateMessage::VideoState::Suspended;
@@ -370,9 +405,9 @@ namespace ntgcalls {
             message.videoState = signaling::MediaStateMessage::VideoState::Active;
         }
 
-        if (!streamManager->hasDevice(StreamManager::Playback, StreamManager::Screen)) {
+        if (!streamManager->hasDevice(StreamManager::Capture, StreamManager::Screen)) {
             message.screencastState = signaling::MediaStateMessage::VideoState::Inactive;
-        } else if (mediaState.screencastPaused) {
+        } else if (mediaState.presentationPaused) {
             message.screencastState = signaling::MediaStateMessage::VideoState::Suspended;
         } else {
             message.screencastState = signaling::MediaStateMessage::VideoState::Active;

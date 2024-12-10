@@ -11,7 +11,8 @@
 #include <wrtc/interfaces/media/channel_manager.hpp>
 
 namespace wrtc {
-    class OutgoingAudioChannel : public sigslot::has_slots<> {
+
+    class OutgoingAudioChannel final : public sigslot::has_slots<> {
         uint32_t _ssrc = 0;
         std::unique_ptr<cricket::VoiceChannel> channel;
         rtc::Thread* workerThread;
@@ -35,4 +36,5 @@ namespace wrtc {
 
         [[nodiscard]] uint32_t ssrc() const;
     };
+
 } // wrtc

@@ -6,7 +6,7 @@
 #include <future>
 #include <nlohmann/json.hpp>
 
-#include "call_interface.hpp"
+#include <ntgcalls/instances/call_interface.hpp>
 #include <ntgcalls/models/auth_params.hpp>
 #include <ntgcalls/signaling/signaling.hpp>
 #include <ntgcalls/models/rtc_server.hpp>
@@ -22,7 +22,7 @@ namespace ntgcalls {
         bool skipIsOutgoing = false;
         std::optional<bytes::vector> g_a_hash, g_a_or_b;
         std::atomic_bool isMakingOffer = false, makingNegotation = false, handshakeCompleted = false;
-        std::unique_ptr<signaling::SignalingInterface> signaling;
+        std::shared_ptr<signaling::SignalingInterface> signaling;
         wrtc::synchronized_callback<bytes::binary> onEmitData;
         std::vector<wrtc::IceCandidate> pendingIceCandidates;
         signaling::Signaling::Version protocolVersion = signaling::Signaling::Version::Unknown;

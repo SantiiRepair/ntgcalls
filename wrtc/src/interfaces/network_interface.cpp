@@ -49,14 +49,29 @@ namespace wrtc {
         connectionChangeCallback = callback;
     }
 
+    void NetworkInterface::onDataChannelMessage(const std::function<void(const bytes::binary& data)>& callback) {
+        dataChannelMessageCallback = callback;
+    }
+
     void NetworkInterface::close() {
         if (factory) {
-            PeerConnectionFactory::UnRef();
             factory = nullptr;
         }
     }
 
     bool NetworkInterface::isDataChannelOpen() const {
         return dataChannelOpen;
+    }
+
+    void NetworkInterface::enableAudioIncoming(const bool enable) {
+        audioIncoming = enable;
+    }
+
+    void NetworkInterface::enableVideoIncoming(const bool enable, const bool isScreenCast) {
+        if (isScreenCast) {
+            screenIncoming = enable;
+        } else {
+            cameraIncoming = enable;
+        }
     }
 } // wrtc

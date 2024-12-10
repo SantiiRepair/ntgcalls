@@ -14,15 +14,15 @@ namespace wrtc {
     public:
         ~AudioTrackSource() override;
 
-        SourceState state() const override;
+        [[nodiscard]] SourceState state() const override;
 
-        bool remote() const override;
+        [[nodiscard]] bool remote() const override;
 
         void AddSink(webrtc::AudioTrackSinkInterface *sink) override;
 
         void RemoveSink(webrtc::AudioTrackSinkInterface *sink) override;
 
-        void PushData(const RTCOnDataEvent &, int64_t absolute_capture_timestamp_ms) const;
+        void PushData(const RTCOnDataEvent &, int64_t absoluteCaptureTimestampMs) const;
 
     private:
         std::atomic<webrtc::AudioTrackSinkInterface *> _sink = {nullptr};

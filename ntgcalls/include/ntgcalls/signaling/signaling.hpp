@@ -4,8 +4,8 @@
 
 #pragma once
 
-#include "signaling_interface.hpp"
 #include <ntgcalls/exceptions.hpp>
+#include <ntgcalls/signaling/signaling_interface.hpp>
 
 namespace signaling {
 
@@ -18,7 +18,7 @@ namespace signaling {
             V2Full = 1 << 2
         };
 
-        static std::unique_ptr<SignalingInterface> Create(
+        static std::shared_ptr<SignalingInterface> Create(
             Version version,
             rtc::Thread* networkThread,
             rtc::Thread* signalingThread,
@@ -36,8 +36,6 @@ namespace signaling {
         static constexpr char defaultVersion[] = "8.0.0";
 
         static std::string bestMatch(std::vector<std::string> versions);
-
-        static std::tuple<int, int, int> versionToTuple(const std::string& version);
     };
 
     inline bool operator&(const Signaling::Version lhs, Signaling::Version rhs) {

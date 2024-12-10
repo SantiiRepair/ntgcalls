@@ -3,29 +3,24 @@
 //
 
 #pragma once
-#include <ntgcalls/media/base_sink.hpp>
 #include <wrtc/utils/binary.hpp>
 #include <wrtc/utils/syncronized_callback.hpp>
+#include <ntgcalls/io/base_io.hpp>
+#include <wrtc/models/frame_data.hpp>
 
 namespace ntgcalls {
 
-    class BaseReader {
+    class BaseReader: public virtual BaseIO {
     protected:
-        wrtc::synchronized_callback<void> eofCallback;
-        wrtc::synchronized_callback<bytes::unique_binary> dataCallback;
-        BaseSink *sink;
+        wrtc::synchronized_callback<bytes::unique_binary, wrtc::FrameData> dataCallback;
         bool enabled = true;
 
     public:
         explicit BaseReader(BaseSink *sink);
 
-        virtual ~BaseReader();
-
         virtual void open() = 0;
 
-        void onEof(const std::function<void()> &callback);
-
-        void onData(const std::function<void(bytes::unique_binary)> &callback);
+        void onData(const std::function<void(bytes::unique_binary, wrtc::FrameData)> &callback);
 
         virtual bool set_enabled(bool status);
 

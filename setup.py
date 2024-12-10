@@ -41,6 +41,10 @@ def cmake_bin():
     return 'cmake'
 
 
+def release_kind():
+    return 'RelWithDebInfo' if sys.platform.startswith('linux') else 'Release'
+
+
 def install_cmake(cmake_version: str):
     fixed_name = cmake_path()
     if Path(fixed_name, 'bin').exists():
@@ -67,8 +71,7 @@ class CMakeBuild(build_ext):
             install_cmake(CMAKE_VERSION)
         ext_fullpath = Path.cwd() / self.get_ext_fullpath(ext.name)
         extdir = ext_fullpath.parent.resolve()
-        cfg = 'RelWithDebInfo' if 'b' in version else 'Release'
-
+        cfg = release_kind()
         cmake_args = [
             f'-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}{os.sep}',
             f'-DPYTHON_EXECUTABLE={sys.executable}',
@@ -90,6 +93,9 @@ class CMakeBuild(build_ext):
             [cmake_bin(), ext.sourcedir, *cmake_args], cwd=build_temp, check=True
         )
         subprocess.run(
+            [cmake_bin(), '--build', '.', '--target', 'clean_objects'], cwd=build_temp, check=True
+        )
+        subprocess.run(
             [cmake_bin(), '--build', '.', *build_args], cwd=build_temp, check=True
         )
 
@@ -98,7 +104,6 @@ class SharedCommand(Command):
     description = 'Generate shared-libs files'
     user_options = [
         ('no-preserve-cache', None, 'Do not preserve cache'),
-        ('debug', None, 'Debug build'),
         ('static', None, 'Static build'),
         ('android', None, 'Android build'),
     ]
@@ -106,7 +111,6 @@ class SharedCommand(Command):
     # noinspection PyAttributeOutsideInit
     def initialize_options(self):
         self.no_preserve_cache = False
-        self.debug = False
         self.static = False
         self.android = False
 
@@ -121,12 +125,12 @@ class SharedCommand(Command):
             'auto',
         ]
         cmake_args = [
-            f'-DCMAKE_BUILD_TYPE=RelWithDebInfo',
+            f'-DCMAKE_BUILD_TYPE={release_kind()}',
             f'-DSTATIC_BUILD={"ON" if self.static else "OFF"}',
             f'-DCMAKE_TOOLCHAIN_FILE={Path(Path.cwd(), "cmake", "Toolchain.cmake")}',
         ]
         build_args = [
-            '--config', 'RelWithDebInfo',
+            '--config', release_kind(),
             f'-j{multiprocessing.cpu_count()}',
         ]
         build_temp = Path('build_lib')
@@ -137,6 +141,8 @@ class SharedCommand(Command):
             arch_outputs = [
                 'arm64-v8a',
                 'armeabi-v7a',
+                'x86',
+                'x86_64',
             ]
         for arch in arch_outputs:
             new_cmake_args = cmake_args.copy()
@@ -151,6 +157,9 @@ class SharedCommand(Command):
 
             subprocess.run(
                 [cmake_bin(), source_dir, *new_cmake_args], cwd=build_temp, check=True
+            )
+            subprocess.run(
+                [cmake_bin(), '--build', '.', '--target', 'clean_objects'], cwd=build_temp, check=True
             )
             subprocess.run(
                 [cmake_bin(), '--build', '.', *build_args], cwd=build_temp, check=True

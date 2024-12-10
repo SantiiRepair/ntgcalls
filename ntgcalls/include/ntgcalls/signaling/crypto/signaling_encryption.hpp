@@ -8,9 +8,9 @@
 #include <rtc_base/copy_on_write_buffer.h>
 
 
-#include "auth_key.hpp"
 #include <wrtc/utils/binary.hpp>
 #include <wrtc/utils/syncronized_callback.hpp>
+#include <ntgcalls/signaling/crypto/auth_key.hpp>
 
 namespace signaling {
 
@@ -21,6 +21,7 @@ namespace signaling {
         };
 
         uint64_t counter = 0;
+        std::mutex mutex;
         EncryptionKey _key;
         std::vector<uint32_t> largestIncomingCounters;
         std::vector<MessageForResend> myNotYetAckedMessages;
@@ -49,7 +50,7 @@ namespace signaling {
 
         wrtc::synchronized_callback<int, int> requestSendServiceCallback;
 
-        [[nodiscard]] bytes::binary encryptPrepared(const rtc::CopyOnWriteBuffer &buffer) const;
+        [[nodiscard]] bytes::binary encryptPrepared(const rtc::CopyOnWriteBuffer &buffer);
 
         static void WriteSeq(void *bytes, uint32_t seq);
 

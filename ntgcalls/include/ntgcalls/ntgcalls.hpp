@@ -16,6 +16,8 @@
 #include <ntgcalls/utils/hardware_info.hpp>
 #include <ntgcalls/utils/log_sink_impl.hpp>
 #include <ntgcalls/devices/media_devices.hpp>
+#include <ntgcalls/models/remote_source_state.hpp>
+#include <wrtc/models/media_content.hpp>
 
 #define CHECK_AND_THROW_IF_EXISTS(chatId) \
 if (exists(chatId)) { \
@@ -31,8 +33,10 @@ namespace ntgcalls {
         std::unordered_map<int64_t, std::shared_ptr<CallInterface>> connections;
         wrtc::synchronized_callback<int64_t, StreamManager::Type, StreamManager::Device> onEof;
         wrtc::synchronized_callback<int64_t, MediaState> mediaStateCallback;
-        wrtc::synchronized_callback<int64_t, CallInterface::ConnectionState> connectionChangeCallback;
+        wrtc::synchronized_callback<int64_t, CallNetworkState> connectionChangeCallback;
         wrtc::synchronized_callback<int64_t, BYTES(bytes::binary)> emitCallback;
+        wrtc::synchronized_callback<int64_t, RemoteSource> remoteSourceCallback;
+        wrtc::synchronized_callback<int64_t, int64_t, StreamManager::Mode, StreamManager::Device, BYTES(bytes::binary), wrtc::FrameData> frameCallback;
         std::unique_ptr<rtc::Thread> updateThread;
         std::unique_ptr<HardwareInfo> hardwareInfo;
         std::mutex mutex;
@@ -66,7 +70,13 @@ namespace ntgcalls {
 
         ASYNC_RETURN(std::string) createCall(int64_t chatId, const MediaDescription& media);
 
-        ASYNC_RETURN(void) connect(int64_t chatId, const std::string& params);
+        ASYNC_RETURN(std::string) initPresentation(int64_t chatId);
+
+        ASYNC_RETURN(void) connect(int64_t chatId, const std::string& params, bool isPresentation);
+
+        ASYNC_RETURN(uint32_t) addIncomingVideo(int64_t chatId, const std::string& endpoint, const std::vector<wrtc::SsrcGroup>& ssrcGroups);
+
+        ASYNC_RETURN(bool) removeIncomingVideo(int64_t chatId, const std::string& endpoint);
 
         ASYNC_RETURN(void) setStreamSources(int64_t chatId, StreamManager::Mode mode, const MediaDescription& media);
 
@@ -80,6 +90,8 @@ namespace ntgcalls {
 
         ASYNC_RETURN(void) stop(int64_t chatId);
 
+        ASYNC_RETURN(void) stopPresentation(int64_t chatId);
+
         ASYNC_RETURN(uint64_t) time(int64_t chatId, StreamManager::Mode mode);
 
         ASYNC_RETURN(MediaState) getState(int64_t chatId);
@@ -92,15 +104,27 @@ namespace ntgcalls {
 
         static Protocol getProtocol();
 
+#ifndef IS_ANDROID
+        static void enableGlibLoop(bool enable);
+
+        static void enableH264Encoder(bool enable);
+#endif
+
         void onUpgrade(const std::function<void(int64_t, MediaState)>& callback);
 
         void onStreamEnd(const std::function<void(int64_t, StreamManager::Type, StreamManager::Device)>& callback);
 
-        void onConnectionChange(const std::function<void(int64_t, CallInterface::ConnectionState)>& callback);
+        void onConnectionChange(const std::function<void(int64_t, CallNetworkState)>& callback);
+
+        void onFrame(const std::function<void(int64_t, int64_t, StreamManager::Mode, StreamManager::Device, const BYTES(bytes::binary)&, wrtc::FrameData)>& callback);
 
         void onSignalingData(const std::function<void(int64_t, const BYTES(bytes::binary)&)>& callback);
 
+        void onRemoteSourceChange(const std::function<void(int64_t, RemoteSource)>& callback);
+
         ASYNC_RETURN(void) sendSignalingData(int64_t chatId, const BYTES(bytes::binary) &msgKey);
+
+        ASYNC_RETURN(void) sendExternalFrame(int64_t chatId, StreamManager::Device device, const BYTES(bytes::binary) &data, wrtc::FrameData frameData);
 
         ASYNC_RETURN(std::map<int64_t, StreamManager::MediaStatus>) calls();
     };

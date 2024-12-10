@@ -6,70 +6,34 @@
 
 #include <memory>
 #include <utility>
-#include <api/enable_media.h>
-#include <p2p/base/p2p_constants.h>
-#include <rtc_base/crypto_random.h>
-#include <rtc_base/rtc_certificate_generator.h>
-#include <p2p/base/basic_async_resolver_factory.h>
-#include <p2p/base/p2p_transport_channel.h>
-#include <pc/media_factory.h>
 
 #include <wrtc/interfaces/reflector_relay_port_factory.hpp>
-#include <wrtc/interfaces/media/rtc_audio_source.hpp>
 #include <wrtc/exceptions.hpp>
 
 
 namespace wrtc {
-    NativeConnection::NativeConnection(std::vector<RTCServer> rtcServers,
-        const bool enableP2P,
-        const bool isOutgoing):
+    NativeConnection::NativeConnection(std::vector<RTCServer> rtcServers, const bool enableP2P, const bool isOutgoing):
     isOutgoing(isOutgoing),
     enableP2P(enableP2P),
     rtcServers(std::move(rtcServers)),
-    eventLog(std::make_unique<webrtc::RtcEventLogNull>()) {
-        networkThread()->PostTask([this] {
-            localParameters = PeerIceParameters(
-                rtc::CreateRandomString(cricket::ICE_UFRAG_LENGTH),
-                rtc::CreateRandomString(cricket::ICE_PWD_LENGTH),
-                true
-            );
-            localCertificate = rtc::RTCCertificateGenerator::GenerateCertificate(
-                rtc::KeyParams(rtc::KT_ECDSA),
-                absl::nullopt
-            );
-            asyncResolverFactory = std::make_unique<webrtc::BasicAsyncDnsResolverFactory>();
-            dtlsSrtpTransport = std::make_unique<webrtc::DtlsSrtpTransport>(true, factory->fieldTrials());
-            dtlsSrtpTransport->SetDtlsTransports(nullptr, nullptr);
-            dtlsSrtpTransport->SetActiveResetSrtpParams(false);
-            dtlsSrtpTransport->SubscribeReadyToSend(this, [this](const bool readyToSend) {
-                DtlsReadyToSend(readyToSend);
-            });
-            dtlsSrtpTransport->SubscribeRtcpPacketReceived(this, [this](const rtc::CopyOnWriteBuffer* packet, int64_t) {
-                workerThread()->PostTask([this, packet = *packet] {
-                    call->Receiver()->DeliverRtcpPacket(packet);
-                });
-            });
-            resetDtlsSrtpTransport();
-        });
-        channelManager = std::make_unique<ChannelManager>(
-            factory->mediaEngine(),
-            workerThread(),
-            networkThread(),
-            signalingThread()
-        );
-        workerThread()->BlockingCall([&] {
-            webrtc::CallConfig callConfig(factory->environment(), networkThread());
-            callConfig.audio_state = factory->mediaEngine()->voice().GetAudioState();
-            call = factory->mediaFactory()->CreateCall(callConfig);
-        });
+    eventLog(std::make_unique<webrtc::RtcEventLogNull>()) {}
+
+    void NativeConnection::open() {
+        initConnection();
         contentNegotiationContext = std::make_unique<ContentNegotiationContext>(factory->fieldTrials(), isOutgoing, factory->mediaEngine(), factory->ssrcGenerator());
         contentNegotiationContext->copyCodecsFromChannelManager(factory->mediaEngine(), false);
-        networkThread()->PostTask([this] {
-            start();
+        std::weak_ptr weak(shared_from_this());
+        networkThread()->PostTask([weak] {
+
+            const auto strong = std::static_pointer_cast<NativeConnection>(weak.lock());
+            if (!strong) {
+                return;
+            }
+            strong->start();
         });
     }
 
-    void NativeConnection::resetDtlsSrtpTransport() {
+    cricket::RelayPortFactoryInterface* NativeConnection::getRelayPortFactory() {
         bool standaloneReflectorMode = getCustomParameterBool("network_standalone_reflectors");
         uint32_t standaloneReflectorRoleId = 0;
         if (standaloneReflectorMode) {
@@ -80,12 +44,32 @@ namespace wrtc {
             }
         }
         relayPortFactory = std::make_unique<ReflectorRelayPortFactory>(rtcServers, standaloneReflectorMode, standaloneReflectorRoleId);
-        portAllocator = std::make_unique<cricket::BasicPortAllocator>(
-            factory->networkManager(),
-            factory->socketFactory(),
-            nullptr,
-            relayPortFactory.get()
-        );
+        return relayPortFactory.get();
+    }
+
+    std::pair<cricket::ServerAddresses, std::vector<cricket::RelayServerConfig>> NativeConnection::getStunAndTurnServers() {
+        cricket::ServerAddresses stunServers;
+        std::vector<cricket::RelayServerConfig> turnServers;
+        for (auto &[id, host, port, login, password, isTurn, isTcp] : rtcServers) {
+            if (isTcp) {
+                continue;
+            }
+            if (isTurn) {
+                turnServers.emplace_back(
+                    rtc::SocketAddress(host, port),
+                    login,
+                    password,
+                    cricket::PROTO_UDP
+                );
+            } else {
+                auto stunAddress = rtc::SocketAddress(host, port);
+                stunServers.insert(stunAddress);
+            }
+        }
+        return {stunServers, turnServers};
+    }
+
+    void NativeConnection::setPortAllocatorFlags(cricket::BasicPortAllocator* portAllocator) {
         uint32_t flags = portAllocator->flags();
         if (getCustomParameterBool("network_use_default_route")) {
             flags |= cricket::PORTALLOCATOR_DISABLE_ADAPTER_ENUMERATION;
@@ -106,57 +90,50 @@ namespace wrtc {
         }
         portAllocator->set_step_delay(cricket::kMinimumStepDelay);
         portAllocator->set_flags(flags);
-        portAllocator->Initialize();
-        cricket::ServerAddresses stunServers;
-        std::vector<cricket::RelayServerConfig> turnServers;
-        for (auto &[id, host, port, login, password, isTurn, isTcp] : rtcServers) {
-            if (isTcp) {
-                continue;
-            }
-            if (isTurn) {
-                turnServers.emplace_back(
-                    rtc::SocketAddress(host, port),
-                    login,
-                    password,
-                    cricket::PROTO_UDP
-                );
-            } else {
-                auto stunAddress = rtc::SocketAddress(host, port);
-                stunServers.insert(stunAddress);
-            }
-        }
-        portAllocator->SetConfiguration(stunServers, turnServers, 0, webrtc::NO_PRUNE);
-        webrtc::IceTransportInit iceTransportInit;
-        iceTransportInit.set_port_allocator(portAllocator.get());
-        iceTransportInit.set_async_dns_resolver_factory(asyncResolverFactory.get());
-        transportChannel = cricket::P2PTransportChannel::Create("transport", 0, std::move(iceTransportInit));
-        cricket::IceConfig iceConfig;
-        iceConfig.continual_gathering_policy = cricket::GATHER_CONTINUALLY;
-        iceConfig.prioritize_most_likely_candidate_pairs = true;
-        iceConfig.regather_on_failed_networks_interval = 8000;
-        if (getCustomParameterBool("network_skip_initial_ping")) {
-            iceConfig.presume_writable_when_fully_relayed = true;
-        }
-        transportChannel->SetIceConfig(iceConfig);
-        const cricket::IceParameters localIceParameters(
-            localParameters.ufrag,
-            localParameters.pwd,
-            localParameters.supportsRenomination
-        );
-        transportChannel->SetIceParameters(localIceParameters);
-        transportChannel->SetIceRole(isOutgoing ? cricket::ICEROLE_CONTROLLING : cricket::ICEROLE_CONTROLLED);
-        transportChannel->SetRemoteIceMode(cricket::ICEMODE_FULL);
+    }
+
+    int NativeConnection::getRegatherOnFailedNetworksInterval() {
+        return 8000;
+    }
+
+    cricket::IceRole NativeConnection::iceRole() const {
+        return isOutgoing ? cricket::ICEROLE_CONTROLLING : cricket::ICEROLE_CONTROLLED;
+    }
+
+    cricket::IceMode NativeConnection::iceMode() const {
+        return cricket::ICEMODE_FULL;
+    }
+
+    void NativeConnection::registerTransportCallbacks(cricket::P2PTransportChannel* transportChannel) {
         transportChannel->SignalCandidateGathered.connect(this, &NativeConnection::candidateGathered);
-        transportChannel->SignalIceTransportStateChanged.connect(this, &NativeConnection::transportStateChanged);
-        transportChannel->SetCandidatePairChangeCallback([this](cricket::CandidatePairChangeEvent const &event) {
-            candidatePairChanged(event);
+        std::weak_ptr weak(shared_from_this());
+        transportChannel->SetCandidatePairChangeCallback([weak](cricket::CandidatePairChangeEvent const &event) {
+            const auto strong = std::static_pointer_cast<NativeConnection>(weak.lock());
+            if (!strong) {
+                return;
+            }
+            strong->candidatePairChanged(event);
         });
         transportChannel->SignalNetworkRouteChanged.connect(this, &NativeConnection::transportRouteChanged);
-        dtlsTransport = std::make_unique<cricket::DtlsTransport>(transportChannel.get(), getDefaultCryptoOptions(), nullptr);
-        dtlsTransport->SignalWritableState.connect(this, &NativeConnection::OnTransportWritableState_n);
-        dtlsTransport->SignalReceivingState.connect(this, &NativeConnection::OnTransportReceivingState_n);
-        dtlsTransport->SetLocalCertificate(localCertificate);
-        dtlsSrtpTransport->SetDtlsTransports(dtlsTransport.get(), nullptr);
+    }
+
+    std::optional<rtc::SSLRole> NativeConnection::dtlsRole() const {
+        return std::nullopt;
+    }
+
+    bool NativeConnection::supportsRenomination() const {
+        return localParameters.supportsRenomination;
+    }
+
+    void NativeConnection::stateUpdated(const bool isConnected) {
+        if (!isConnected) {
+            lastDisconnectedTimestamp = rtc::TimeMillis();
+        }
+        notifyStateUpdated();
+    }
+
+    int NativeConnection::candidatePoolSize() const {
+        return 0;
     }
 
     bool NativeConnection::getCustomParameterBool(const std::string& name) const {
@@ -233,10 +210,22 @@ namespace wrtc {
                 }
             }
         }
-    }
 
-    NativeConnection::~NativeConnection() {
-        close();
+        pendingContent.clear();
+        for (const auto &content : coordinatedState->incomingContents) {
+            switch (content.type) {
+            case MediaContent::Type::Audio:
+                incomingAudioChannels.clear();
+                addIncomingSmartSource(std::to_string(content.ssrc), content);
+                break;
+            case MediaContent::Type::Video:
+                incomingVideoChannels.clear();
+                addIncomingSmartSource(std::to_string(content.ssrc), content);
+                break;
+            default:
+                RTC_LOG(LS_WARNING) << "NativeNetworkingImpl unsupported incoming content type";
+            }
+        }
     }
 
     void NativeConnection::notifyStateUpdated() const {
@@ -248,34 +237,30 @@ namespace wrtc {
         } else {
             newValue = ConnectionState::Connecting;
         }
-        signalingThread()->PostTask([this, newValue] {
-            (void) connectionChangeCallback(newValue);
+        std::weak_ptr weak(shared_from_this());
+        signalingThread()->PostTask([weak, newValue] {
+            const auto strong = std::static_pointer_cast<const NativeConnection>(weak.lock());
+            if (!strong) {
+                return;
+            }
+            (void) strong->connectionChangeCallback(newValue);
         });
-    }
-
-    void NativeConnection::DtlsReadyToSend(const bool isReadyToSend) {
-        UpdateAggregateStates_n();
-
-        if (isReadyToSend) {
-            networkThread()->PostTask([this] {
-                UpdateAggregateStates_n();
-            });
-        }
     }
 
     // ReSharper disable once CppMemberFunctionMayBeConst
     void NativeConnection::candidateGathered(cricket::IceTransportInternal*, const cricket::Candidate& candidate) {
         assert(networkThread()->IsCurrent());
-        signalingThread()->PostTask([this, candidate] {
+        std::weak_ptr weak(shared_from_this());
+        signalingThread()->PostTask([weak, candidate] {
+            const auto strong = std::static_pointer_cast<NativeConnection>(weak.lock());
+            if (!strong) {
+                return;
+            }
             cricket::Candidate patchedCandidate = candidate;
             patchedCandidate.set_component(1);
             webrtc::JsepIceCandidate iceCandidate{std::string(),0, patchedCandidate};
-            (void) iceCandidateCallback(IceCandidate(&iceCandidate));
+            (void) strong->iceCandidateCallback(IceCandidate(&iceCandidate));
         });
-    }
-
-    void NativeConnection::transportStateChanged(cricket::IceTransportInternal*) {
-        UpdateAggregateStates_n();
     }
 
     // ReSharper disable once CppPassValueParameterByConstReference
@@ -295,16 +280,6 @@ namespace wrtc {
         }
     }
 
-    void NativeConnection::OnTransportWritableState_n(rtc::PacketTransportInternal*) {
-        assert(networkThread()->IsCurrent());
-        UpdateAggregateStates_n();
-    }
-
-    void NativeConnection::OnTransportReceivingState_n(rtc::PacketTransportInternal*){
-        assert(networkThread()->IsCurrent());
-        UpdateAggregateStates_n();
-    }
-
     void NativeConnection::candidatePairChanged(cricket::CandidatePairChangeEvent const& event) {
         ConnectionDescription connectionDescription;
 
@@ -317,40 +292,6 @@ namespace wrtc {
         }
     }
 
-    void NativeConnection::UpdateAggregateStates_n() {
-        assert(networkThread()->IsCurrent());
-        const auto state = transportChannel->GetIceTransportState();
-        bool isConnected = false;
-        switch (state) {
-            case webrtc::IceTransportState::kConnected:
-            case webrtc::IceTransportState::kCompleted:
-                isConnected = true;
-                break;
-            default:
-                break;
-        }
-        if (!dtlsSrtpTransport->IsWritable(false)) {
-            isConnected = false;
-        }
-        if (connected != isConnected) {
-            connected = isConnected;
-            if (!isConnected) {
-                lastDisconnectedTimestamp = rtc::TimeMillis();
-            }
-            notifyStateUpdated();
-            if (dataChannelInterface) {
-                dataChannelInterface->updateIsConnected(isConnected);
-            }
-        }
-    }
-
-    webrtc::CryptoOptions NativeConnection::getDefaultCryptoOptions() {
-        auto options = webrtc::CryptoOptions();
-        options.srtp.enable_aes128_sha1_80_crypto_cipher = true;
-        options.srtp.enable_gcm_crypto_suites = true;
-        return options;
-    }
-
     void NativeConnection::start() {
         transportChannel->MaybeStartGathering();
         dataChannelInterface = std::make_unique<SctpDataChannelProviderInterfaceImpl>(
@@ -360,12 +301,24 @@ namespace wrtc {
             networkThread(),
             signalingThread()
         );
-        dataChannelInterface->onStateChanged([this](const bool isOpen) {
-            if (!dataChannelOpen && isOpen) {
-                dataChannelOpen = true;
-                (void) dataChannelOpenedCallback();
+        std::weak_ptr weak(shared_from_this());
+        dataChannelInterface->onMessageReceived([weak](const bytes::binary &data) {
+            const auto strong = std::static_pointer_cast<NativeConnection>(weak.lock());
+            if (!strong) {
+                return;
+            }
+            (void) strong->dataChannelMessageCallback(data);
+        });
+        dataChannelInterface->onStateChanged([weak](const bool isOpen) {
+            const auto strong = std::static_pointer_cast<NativeConnection>(weak.lock());
+            if (!strong) {
+                return;
+            }
+            if (!strong->dataChannelOpen && isOpen) {
+                strong->dataChannelOpen = true;
+                (void) strong->dataChannelOpenedCallback();
             } else {
-                dataChannelOpen = false;
+                strong->dataChannelOpen = false;
             }
         });
         lastDisconnectedTimestamp = rtc::TimeMillis();
@@ -373,45 +326,8 @@ namespace wrtc {
     }
 
     void NativeConnection::close() {
-        isExiting = true;
-        audioChannel = nullptr;
-        videoChannel = nullptr;
-        channelManager = nullptr;
-        if (factory) {
-            workerThread()->BlockingCall([&] {
-                call = nullptr;
-            });
-        }
         contentNegotiationContext = nullptr;
-        if (factory) {
-            networkThread()->BlockingCall([&] {
-                if (transportChannel) {
-                    transportChannel->SignalCandidateGathered.disconnect(this);
-                    transportChannel->SignalIceTransportStateChanged.disconnect(this);
-                    transportChannel->SignalNetworkRouteChanged.disconnect(this);
-                }
-                dataChannelInterface = nullptr;
-                if (dtlsTransport) {
-                    dtlsTransport->SignalWritableState.disconnect(this);
-                    dtlsTransport->SignalReceivingState.disconnect(this);
-                }
-                if (dtlsSrtpTransport) {
-                    dtlsSrtpTransport->SetDtlsTransports(nullptr, nullptr);
-                }
-                dtlsTransport = nullptr;
-                transportChannel = nullptr;
-                portAllocator = nullptr;
-            });
-        }
-        NetworkInterface::close();
-    }
-
-    void NativeConnection::sendDataChannelMessage(const bytes::binary& data) const {
-        networkThread()->PostTask([this, data] {
-            if (dataChannelInterface) {
-                dataChannelInterface->sendDataChannelMessage(data);
-            }
-        });
+        NativeNetworkInterface::close();
     }
 
     void NativeConnection::addIceCandidate(const IceCandidate& rawCandidate) const {
@@ -422,30 +338,40 @@ namespace wrtc {
                 return;
             }
         }
-        networkThread()->PostTask([this, candidate] {
-            transportChannel->AddRemoteCandidate(candidate);
+        std::weak_ptr weak(shared_from_this());
+        networkThread()->PostTask([weak, candidate] {
+            const auto strong = std::static_pointer_cast<const NativeConnection>(weak.lock());
+            if (!strong) {
+                return;
+            }
+            strong->transportChannel->AddRemoteCandidate(candidate);
         });
     }
 
     void NativeConnection::setRemoteParams(PeerIceParameters remoteIceParameters, std::unique_ptr<rtc::SSLFingerprint> fingerprint, const std::string& sslSetup) {
-        networkThread()->PostTask([this, remoteIceParameters = std::move(remoteIceParameters), fingerprint = std::move(fingerprint), sslSetup] {
-            remoteParameters = remoteIceParameters;
+        std::weak_ptr weak(shared_from_this());
+        networkThread()->PostTask([weak, remoteIceParameters = std::move(remoteIceParameters), fingerprint = std::move(fingerprint), sslSetup] {
+            const auto strong = std::static_pointer_cast<NativeConnection>(weak.lock());
+            if (!strong) {
+                return;
+            }
+            strong->remoteParameters = remoteIceParameters;
             const cricket::IceParameters parameters(
                 remoteIceParameters.ufrag,
                 remoteIceParameters.pwd,
                 remoteIceParameters.supportsRenomination
             );
-            transportChannel->SetRemoteIceParameters(parameters);
+            strong->transportChannel->SetRemoteIceParameters(parameters);
             rtc::SSLRole sslRole;
             if (sslSetup == "active") {
                 sslRole = rtc::SSLRole::SSL_SERVER;
             } else if (sslSetup == "passive") {
                 sslRole = rtc::SSLRole::SSL_CLIENT;
             } else {
-                sslRole = isOutgoing ? rtc::SSLRole::SSL_CLIENT : rtc::SSLRole::SSL_SERVER;
+                sslRole = strong->isOutgoing ? rtc::SSLRole::SSL_CLIENT : rtc::SSLRole::SSL_SERVER;
             }
             if (fingerprint) {
-                dtlsTransport->SetRemoteParameters(fingerprint->algorithm, fingerprint->digest.data(), fingerprint->digest.size(), sslRole);
+                strong->dtlsTransport->SetRemoteParameters(fingerprint->algorithm, fingerprint->digest.data(), fingerprint->digest.size(), sslRole);
             }
         });
     }
@@ -458,51 +384,31 @@ namespace wrtc {
         return contentNegotiationContext->setPendingAnswer(std::move(answer));
     }
 
-    std::unique_ptr<MediaTrackInterface> NativeConnection::addTrack(const rtc::scoped_refptr<webrtc::MediaStreamTrackInterface>& track) {
+    std::unique_ptr<MediaTrackInterface> NativeConnection::addOutgoingTrack(const rtc::scoped_refptr<webrtc::MediaStreamTrackInterface>& track) {
         if (const auto audioTrack = dynamic_cast<webrtc::AudioTrackInterface*>(track.get())) {
             audioChannelId = contentNegotiationContext->addOutgoingChannel(audioTrack);
-            audioTrack->AddSink(&audioSink);
-            return std::make_unique<MediaTrackInterface>([this](const bool enable) {
-                if (audioChannel != nullptr) {
-                    audioChannel->set_enabled(enable);
-                }
-            });
         }
         if (const auto videoTrack = dynamic_cast<webrtc::VideoTrackInterface*>(track.get())) {
             videoChannelId = contentNegotiationContext->addOutgoingChannel(videoTrack);
-            videoTrack->AddOrUpdateSink(&videoSink, rtc::VideoSinkWants());
-            return std::make_unique<MediaTrackInterface>([this](const bool enable) {
-                if (videoChannel != nullptr) {
-                    videoChannel->set_enabled(enable);
-                }
-            });
         }
-        throw RTCException("Unsupported track type");
-    }
-
-    std::unique_ptr<rtc::SSLFingerprint> NativeConnection::localFingerprint() const {
-        const auto certificate = localCertificate;
-        if (!certificate) {
-            return nullptr;
-        }
-        return rtc::SSLFingerprint::CreateFromCertificate(*certificate);
-    }
-
-    PeerIceParameters NativeConnection::localIceParameters() {
-        return localParameters;
+        return NativeNetworkInterface::addOutgoingTrack(track);
     }
 
     void NativeConnection::checkConnectionTimeout() {
-        networkThread()->PostDelayedTask([this] {
-            if (isExiting) return;
-            const int64_t currentTimestamp = rtc::TimeMillis();
-            if (constexpr int64_t maxTimeout = 20000; !connected && lastDisconnectedTimestamp + maxTimeout < currentTimestamp) {
-                RTC_LOG(LS_INFO) << "NativeNetworkingImpl timeout " << currentTimestamp - lastDisconnectedTimestamp << " ms";
-                failed = true;
-                notifyStateUpdated();
+        std::weak_ptr weak(shared_from_this());
+        networkThread()->PostDelayedTask([weak] {
+            const auto strong = std::static_pointer_cast<NativeConnection>(weak.lock());
+            if (!strong) {
                 return;
             }
-            checkConnectionTimeout();
+            const int64_t currentTimestamp = rtc::TimeMillis();
+            if (constexpr int64_t maxTimeout = 20000; !strong->connected && strong->lastDisconnectedTimestamp + maxTimeout < currentTimestamp) {
+                RTC_LOG(LS_INFO) << "NativeNetworkingImpl timeout " << currentTimestamp - strong->lastDisconnectedTimestamp << " ms";
+                strong->failed = true;
+                strong->notifyStateUpdated();
+                return;
+            }
+            strong->checkConnectionTimeout();
         }, webrtc::TimeDelta::Millis(1000));
     }
 } // wrtc

@@ -2,13 +2,17 @@
 // Created by Laky64 on 18/08/2023.
 //
 
+#ifndef IS_ANDROID
 #include <wrtc/video_factory/video_factory_config.hpp>
-#include <wrtc/video_factory/hardware/android/android.hpp>
+#include <wrtc/video_factory/software/google/google.hpp>
 #include <wrtc/video_factory/software/vlc/vlc.hpp>
+#include <wrtc/video_factory/software/openh264/openh264.hpp>
 
 namespace wrtc {
 
-    VideoFactoryConfig::VideoFactoryConfig(void* jniEnv) {
+    bool VideoFactoryConfig::allowH264Encoder = false;
+
+    VideoFactoryConfig::VideoFactoryConfig() {
         // Google (Software, VP9, VP8)
         google::addEncoders(encoders);
         google::addDecoders(decoders);
@@ -17,9 +21,11 @@ namespace wrtc {
         vlc::addEncoders(encoders);
         vlc::addDecoders(decoders);
 
-        // Android (Hardware, H264, VP8, VP9)
-        android::addEncoders(encoders, jniEnv);
-        android::addDecoders(decoders, jniEnv);
+        // OpenH264 (Software, H264)
+        if (allowH264Encoder) {
+            openh264::addEncoders(encoders);
+        }
+        openh264::addDecoders(decoders);
 
         // NVCODEC (Hardware, VP8, VP9, H264)
         // TODO: @Laky-64 Add NVCODEC encoder-decoder when available
@@ -33,4 +39,8 @@ namespace wrtc {
         return absl::make_unique<VideoDecoderFactory>(decoders);
     }
 
+    void VideoFactoryConfig::EnableH264Encoder(const bool enable) {
+        allowH264Encoder = enable;
+    }
 } // wrtc
+#endif

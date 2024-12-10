@@ -6,9 +6,6 @@ endif ()
 
 include(ExternalProject)
 
-# https://chromiumdash.appspot.com/branches
-set(WEBRTC_REVISION m128.6613.3.1)
-set(BOOST_REVISION 1.86.0)
 set(BOOST_LIBS filesystem)
 
 option(STATIC_BUILD "Build static libraries" ON)
@@ -18,7 +15,12 @@ if(DEFINED PY_VERSION_INFO)
     set(IS_PYTHON TRUE)
 endif()
 
-project(ntgcalls VERSION 1.3.0.1 LANGUAGES C CXX)
+add_custom_target(clean_objects
+    COMMAND ${CMAKE_COMMAND} -P "${CMAKE_SOURCE_DIR}/cmake/CleanObjects.cmake"
+    COMMENT "Removing all object (.o) files"
+)
+
+project(ntgcalls VERSION 1.3.0.3 LANGUAGES C CXX)
 add_compile_definitions(NTG_VERSION="${CMAKE_PROJECT_VERSION}")
 
 find_package(Threads REQUIRED)
@@ -31,6 +33,8 @@ get_filename_component(props_loc    "version.properties" REALPATH)
 include(cmake/FindWebRTC.cmake)
 include(cmake/FindLibCXX.cmake)
 include(cmake/FindBoost.cmake)
+include(cmake/FindOpenH264.cmake)
+include(cmake/FindFFmpeg.cmake)
 
 # pybind11
 add_subdirectory(deps/pybind11)
