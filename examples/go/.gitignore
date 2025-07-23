@@ -1,4 +1,10 @@
-*.so
-*.h
+ntgcalls/*.h
 *.dll
 *.dylib
+*.so
+*.a
+*.lib
+*.db
+*.sum
+session
+session-test

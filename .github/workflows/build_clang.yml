@@ -1,10 +1,21 @@
-name: Build Arm64 Image
+name: Build CLang Image
+permissions:
+  contents: read
+  packages: write
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: arm64-server
+    runs-on: ${{ matrix.platform.host }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: x86_64
+            host: ubuntu-latest
+          - name: arm64
+            host: arm64-server
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -19,7 +30,7 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: Dockerfile
+          context: docker
+          file: docker/Clang.${{ matrix.platform.name }}.dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository }}/arm64:latest
+          tags: ghcr.io/${{ github.repository }}/${{ matrix.platform.name }}:latest

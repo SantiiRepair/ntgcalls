@@ -7,13 +7,32 @@ target_compile_definitions(${target_name} PUBLIC
     BOOST_NO_CXX98_FUNCTION_BASE
     NDEBUG
     RTC_ENABLE_H265
+    WEBRTC_USE_PIPEWIRE
+    WEBRTC_USE_X11
 )
 
-set_target_properties(${target_name} PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(${target_name} PRIVATE
-    X11
-    dl
-    rt
-    m
-    Threads::Threads
-)
+if (import_libraries)
+    target_link_libraries(${target_name} PUBLIC
+        gnome::gio-2.0
+        gnome::glib-2.0
+        gnome::gobject-2.0
+        mesa::gbm
+        mesa::drm
+        xorg::X11
+        xorg::Xcomposite
+        xorg::Xdamage
+        xorg::Xext
+        xorg::Xfixes
+        xorg::Xrandr
+        xorg::Xtst
+    )
+
+    target_link_libraries(${target_name} PRIVATE
+        dl
+        rt
+        m
+        z
+        resolv
+        Threads::Threads
+    )
+endif ()

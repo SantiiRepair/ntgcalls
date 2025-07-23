@@ -1,183 +1,153 @@
 package main
 
-//#cgo LDFLAGS: -L . -lntgcalls -Wl,-rpath=./
+/*
+// You can also change the file names to have multiple libraries on the same folder,
+// but you need to change the name of the library in the LDFLAGS and the -L folder from . to the
+// folder where the library is located.
+#cgo linux LDFLAGS: -L . -lntgcalls -lm -lz
+#cgo darwin LDFLAGS: -L . -lntgcalls -lc++ -lz -lbz2 -liconv -framework AVFoundation -framework AudioToolbox -framework CoreAudio -framework QuartzCore -framework CoreMedia -framework VideoToolbox -framework AppKit -framework Metal -framework MetalKit -framework OpenGL -framework IOSurface -framework ScreenCaptureKit
+
+// Currently is supported only dynamically linked library on Windows due to
+// https://github.com/golang/go/issues/63903
+#cgo windows LDFLAGS: -L. -lntgcalls
+#include "ntgcalls/ntgcalls.h"
+#include "glibc_compatibility.h"
+*/
 import "C"
 import (
 	"fmt"
+	"github.com/Laky-64/gologging"
 	tg "github.com/amarnathcjd/gogram/telegram"
 	"gotgcalls/ntgcalls"
+	"gotgcalls/ubot"
 )
 
-var inputCall *tg.InputPhoneCall
+var urlVideoTest = "https://docs.evostream.com/sample_content/assets/sintel1m720p.mp4"
 
 func main() {
-	client := ntgcalls.NTgCalls()
-	defer client.Free()
+	gologging.SetLevel(gologging.FatalLevel)
+	gologging.GetLogger("ntgcalls").SetLevel(gologging.DebugLevel)
 	mtproto, _ := tg.NewClient(tg.ClientConfig{
 		AppID:   10029733,
 		AppHash: "d0d81009d46e774f78c0e0e622f5fa21",
 		Session: "session",
 	})
 	_ = mtproto.Start()
-	// Choose between outgoingCall or joinGroupCall
-	fmt.Println(client.Calls())
-	//outgoingCall(client, mtproto, "@PyTgCallsVideoBeta")
-	//joinGroupCall(client, mtproto, "@pytgcallschat")
-	client.OnStreamEnd(func(chatId int64, streamType ntgcalls.StreamType) {
-		fmt.Println(chatId)
-	})
-	client.OnConnectionChange(func(chatId int64, state ntgcalls.ConnectionState) {
-		switch state {
-		case ntgcalls.Connecting:
-			fmt.Println("Connecting with chatId:", chatId)
-		case ntgcalls.Connected:
-			fmt.Println("Connected with chatId:", chatId)
-		case ntgcalls.Failed:
-			fmt.Println("Failed with chatId:", chatId)
-		case ntgcalls.Timeout:
-			fmt.Println("Timeout with chatId:", chatId)
-		case ntgcalls.Closed:
-			fmt.Println("Closed with chatId:", chatId)
+
+	uBotInstance := ubot.NewInstance(mtproto)
+	defer uBotInstance.Close()
+
+	uBotInstance.OnIncomingCall(func(client *ubot.Context, chatId int64) {
+		err := uBotInstance.Play(chatId, getMediaDescription(urlVideoTest))
+		if err != nil {
+			gologging.Fatal(err)
 		}
+	})
+	uBotInstance.OnStreamEnd(func(chatId int64, streamType ntgcalls.StreamType, streamDevice ntgcalls.StreamDevice) {
+		fmt.Println("Stream ended with chatId:", chatId, "streamType:", streamType, "streamDevice:", streamDevice)
+	})
+	uBotInstance.OnFrame(func(chatId int64, mode ntgcalls.StreamMode, device ntgcalls.StreamDevice, frames []ntgcalls.Frame) {
+		fmt.Println("Received frames for chatId:", chatId, "mode:", mode, "device:", device)
+	})
+	mtproto.On("message:[!/.]play", func(message *tg.NewMessage) error {
+		err := uBotInstance.Play(message.ChannelID(), getMediaDescription(urlVideoTest))
+		if err != nil {
+			return err
+		}
+		_, err = message.Reply("Playing!")
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	mtproto.On("message:[!/.]record", func(message *tg.NewMessage) error {
+		err := uBotInstance.Record(message.ChannelID(), ntgcalls.MediaDescription{
+			Microphone: &ntgcalls.AudioDescription{
+				MediaSource:  ntgcalls.MediaSourceExternal,
+				SampleRate:   96000,
+				ChannelCount: 2,
+			},
+		})
+		if err != nil {
+			return err
+		}
+		_, err = message.Reply("Recording!")
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	mtproto.On("message:[!/.]stop", func(message *tg.NewMessage) error {
+		err := uBotInstance.Stop(message.ChannelID())
+		if err != nil {
+			return err
+		}
+		_, err = message.Reply("Stopped!")
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	mtproto.On("message:[!/.]pause", func(message *tg.NewMessage) error {
+		paused, err := uBotInstance.Pause(message.ChannelID())
+		if err != nil {
+			return err
+		}
+		if paused {
+			_, err = message.Reply("Paused!")
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	mtproto.On("message:[!/.]resume", func(message *tg.NewMessage) error {
+		resumed, err := uBotInstance.Resume(message.ChannelID())
+		if err != nil {
+			return err
+		}
+		if resumed {
+			_, err = message.Reply("Resumed!")
+			if err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	mtproto.Idle()
 }
 
-func joinGroupCall(client *ntgcalls.Client, mtproto *tg.Client, username string) {
-	me, _ := mtproto.GetMe()
-	rawChannel, _ := mtproto.ResolveUsername(username)
-	channel := rawChannel.(*tg.Channel)
-	jsonParams, _ := client.CreateCall(channel.ID, ntgcalls.MediaDescription{
-		Audio: &ntgcalls.AudioDescription{
-			InputMode:     ntgcalls.InputModeShell,
-			SampleRate:    96000,
-			BitsPerSample: 16,
-			ChannelCount:  2,
-			Input:         "ffmpeg -i https://docs.evostream.com/sample_content/assets/sintel1m720p.mp4 -f s16le -ac 2 -ar 96k -v quiet pipe:1",
-		},
-	})
-	fullChatRaw, _ := mtproto.ChannelsGetFullChannel(
-		&tg.InputChannelObj{
-			ChannelID:  channel.ID,
-			AccessHash: channel.AccessHash,
-		},
-	)
-	fullChat := fullChatRaw.FullChat.(*tg.ChannelFull)
-	callResRaw, _ := mtproto.PhoneJoinGroupCall(
-		&tg.PhoneJoinGroupCallParams{
-			Muted:        false,
-			VideoStopped: true,
-			Call:         fullChat.Call,
-			Params: &tg.DataJson{
-				Data: jsonParams,
-			},
-			JoinAs: &tg.InputPeerUser{
-				UserID:     me.ID,
-				AccessHash: me.AccessHash,
-			},
-		},
-	)
-	callRes := callResRaw.(*tg.UpdatesObj)
-	for _, update := range callRes.Updates {
-		switch update.(type) {
-		case *tg.UpdateGroupCallConnection:
-			phoneCall := update.(*tg.UpdateGroupCallConnection)
-			_ = client.Connect(channel.ID, phoneCall.Params.Data)
-		}
+func getMediaDescription(url string) ntgcalls.MediaDescription {
+	audioDescription := &ntgcalls.AudioDescription{
+		MediaSource:  ntgcalls.MediaSourceShell,
+		SampleRate:   96000,
+		ChannelCount: 2,
 	}
-}
-
-func outgoingCall(client *ntgcalls.Client, mtproto *tg.Client, username string) {
-	rawUser, _ := mtproto.ResolveUsername(username)
-	user := rawUser.(*tg.UserObj)
-	dhConfigRaw, _ := mtproto.MessagesGetDhConfig(0, 256)
-	dhConfig := dhConfigRaw.(*tg.MessagesDhConfigObj)
-	gAHash, _ := client.CreateP2PCall(user.ID, ntgcalls.DhConfig{
-		G:      dhConfig.G,
-		P:      dhConfig.P,
-		Random: dhConfig.Random,
-	}, nil, ntgcalls.MediaDescription{
-		Audio: &ntgcalls.AudioDescription{
-			InputMode:     ntgcalls.InputModeShell,
-			SampleRate:    96000,
-			BitsPerSample: 16,
-			ChannelCount:  2,
-			Input:         "ffmpeg -i https://docs.evostream.com/sample_content/assets/sintel1m720p.mp4 -f s16le -ac 2 -ar 96k -v quiet pipe:1",
-		},
-	})
-	protocolRaw := client.GetProtocol()
-	protocol := &tg.PhoneCallProtocol{
-		UdpP2P:          protocolRaw.UdpP2P,
-		UdpReflector:    protocolRaw.UdpReflector,
-		MinLayer:        protocolRaw.MinLayer,
-		MaxLayer:        protocolRaw.MaxLayer,
-		LibraryVersions: protocolRaw.Versions,
+	videoDescription := &ntgcalls.VideoDescription{
+		MediaSource: ntgcalls.MediaSourceShell,
+		Width:       1280,
+		Height:      720,
+		Fps:         30,
 	}
-	_, _ = mtproto.PhoneRequestCall(
-		&tg.PhoneRequestCallParams{
-			Protocol: protocol,
-			UserID:   &tg.InputUserObj{UserID: user.ID, AccessHash: user.AccessHash},
-			GAHash:   gAHash,
-			RandomID: int32(tg.GenRandInt()),
-		},
+
+	baseFFmpeg := "ffmpeg -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 2 -i"
+	audioDescription.Input = fmt.Sprintf(
+		"%s %s -f s16le -ac %d -ar %d -v quiet pipe:1",
+		baseFFmpeg,
+		url,
+		audioDescription.ChannelCount,
+		audioDescription.SampleRate,
 	)
-
-	mtproto.AddRawHandler(&tg.UpdatePhoneCall{}, func(m tg.Update, c *tg.Client) error {
-		phoneCall := m.(*tg.UpdatePhoneCall).PhoneCall
-		switch phoneCall.(type) {
-		case *tg.PhoneCallAccepted:
-			call := phoneCall.(*tg.PhoneCallAccepted)
-			res, _ := client.ExchangeKeys(user.ID, call.GB, 0)
-			inputCall = &tg.InputPhoneCall{
-				ID:         call.ID,
-				AccessHash: call.AccessHash,
-			}
-			client.OnSignal(func(chatId int64, signal []byte) {
-				_, _ = mtproto.PhoneSendSignalingData(inputCall, signal)
-			})
-			callConfirmRes, _ := mtproto.PhoneConfirmCall(
-				inputCall,
-				res.GAOrB,
-				res.KeyFingerprint,
-				protocol,
-			)
-			callRes := callConfirmRes.PhoneCall.(*tg.PhoneCallObj)
-			rtcServers := make([]ntgcalls.RTCServer, len(callRes.Connections))
-			for i, connection := range callRes.Connections {
-				switch connection.(type) {
-				case *tg.PhoneConnectionWebrtc:
-					rtcServer := connection.(*tg.PhoneConnectionWebrtc)
-					rtcServers[i] = ntgcalls.RTCServer{
-						ID:       rtcServer.ID,
-						Ipv4:     rtcServer.Ip,
-						Ipv6:     rtcServer.Ipv6,
-						Username: rtcServer.Username,
-						Password: rtcServer.Password,
-						Port:     rtcServer.Port,
-						Turn:     rtcServer.Turn,
-						Stun:     rtcServer.Stun,
-					}
-				case *tg.PhoneConnectionObj:
-					phoneServer := connection.(*tg.PhoneConnectionObj)
-					rtcServers[i] = ntgcalls.RTCServer{
-						ID:      phoneServer.ID,
-						Ipv4:    phoneServer.Ip,
-						Ipv6:    phoneServer.Ipv6,
-						Port:    phoneServer.Port,
-						Turn:    true,
-						Tcp:     phoneServer.Tcp,
-						PeerTag: phoneServer.PeerTag,
-					}
-				}
-			}
-			_ = client.ConnectP2P(user.ID, rtcServers, callRes.Protocol.LibraryVersions, callRes.P2PAllowed)
-		}
-		return nil
-	})
-
-	mtproto.AddRawHandler(&tg.UpdatePhoneCallSignalingData{}, func(m tg.Update, c *tg.Client) error {
-		signalingData := m.(*tg.UpdatePhoneCallSignalingData).Data
-		_ = client.SendSignalingData(user.ID, signalingData)
-		return nil
-	})
+	videoDescription.Input = fmt.Sprintf(
+		"%s %s -f rawvideo -r %d -pix_fmt yuv420p -vf scale=%d:%d -v quiet pipe:1",
+		baseFFmpeg,
+		url,
+		videoDescription.Fps,
+		videoDescription.Width,
+		videoDescription.Height,
+	)
+	return ntgcalls.MediaDescription{
+		Microphone: audioDescription,
+		Camera:     videoDescription,
+	}
 }

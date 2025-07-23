@@ -1,7 +1,13 @@
 package ntgcalls
 
 type Client struct {
-	uid       uint32
-	exists    bool
-	streamEnd []StreamEndCallback
+	ptr                         uintptr
+	connectionChangeCallbacks   []ConnectionChangeCallback
+	streamEndCallbacks          []StreamEndCallback
+	upgradeCallbacks            []UpgradeCallback
+	signalCallbacks             []SignalCallback
+	frameCallbacks              []FrameCallback
+	remoteSourceCallbacks       []RemoteSourceCallback
+	broadcastTimestampCallbacks []BroadcastTimestampCallback
+	broadcastPartCallbacks      []BroadcastPartCallback
 }
