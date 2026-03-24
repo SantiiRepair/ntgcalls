@@ -14,7 +14,7 @@ add_custom_target(clean_objects
     COMMENT "Removing all object (.o) files"
 )
 
-project(ntgcalls VERSION 2.0.7 LANGUAGES C CXX)
+project(ntgcalls VERSION 2.1.0 LANGUAGES C CXX)
 include(cmake/VersionUtil.cmake)
 
 if (MACOS)
@@ -38,11 +38,16 @@ include(cmake/FindOpenH264.cmake)
 include(cmake/FindFFmpeg.cmake)
 
 # pybind11
-add_subdirectory(deps/pybind11)
+if (IS_PYTHON)
+    set(PYBIND11_FINDPYTHON "NEW")
+    add_subdirectory(deps/pybind11)
+endif ()
 
-# nlohmann/json
-set(JSON_BuildTests OFF CACHE INTERNAL "")
-add_subdirectory(deps/json EXCLUDE_FROM_ALL)
+# Oboe
+if (ANDROID)
+    add_subdirectory(deps/oboe)
+    setup_platform_flags(oboe OFF)
+endif ()
 
 add_subdirectory(wrtc)
 add_subdirectory(ntgcalls)
